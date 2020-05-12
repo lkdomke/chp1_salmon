@@ -1,3 +1,6 @@
+# Ignore data on local computer
+/Data
+
 # History files
 .Rhistory
 .Rapp.history
