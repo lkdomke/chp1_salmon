@@ -1,0 +1,245 @@
+---
+title: "Seagrass_biomass_regression_2017"
+author: "Lia Domke"
+date: "10/21/2019"
+output: html_document
+---
+We're curious to see if there is a relationship between *longest* leaf length to *total* shoot biomass. 
+Data available: In 2017 21 sites were surveyed for seagrass. At each site, 8 0.25m^2 quadrats were surveyed and 5 entire shoots (i.e. multiple leaves) were removed and brought back to the lab to be measured (in cm). Each shoot (n = 840) was weighed to get total fresh and dry biomass (in grams) and each leaf on the shoot had its length (cm) and width (cm) measured. 
+
+We are interested in the length of the longest leaf and the dry biomass. 
+# Data import
+```{r}
+eelgrass <- read.csv("..//ALL_DATA/seagrass_biometrics_CLEAN.csv")
+```
+# Libraries
+```{r, echo = FALSE}
+library(tidyverse)
+library(MASS)
+library(visreg)
+library(readxl)
+library(ggplot2)
+```
+# Data Cleaning
+```{r}
+# extract what we're interested in 
+str(eelgrass)
+eel <- eelgrass %>%
+  mutate(shoot_dw = shoot_foil_dw-shoot_foil)  # calculate dry weight
+# determin max leaf length
+eel2 <- eel %>% 
+  rowwise() %>%
+  mutate(max_length = max(leaf_length1, leaf_length2, leaf_length3, leaf_length4, leaf_length5, leaf_length6, leaf_length7, leaf_length8, leaf_length9, leaf_length10, na.rm=TRUE)) %>%
+  mutate(mean_length = mean(leaf_length1, leaf_length2, leaf_length3, leaf_length4, leaf_length5, leaf_length6, leaf_length7, leaf_length8, leaf_length9, leaf_length10, na.rm=TRUE))
+str(eel2)
+
+# subset only the data that was collected before July (the main part of the growing season)
+
+eel_sub <- eel2 %>%
+  filter(YYYYMMDD < 20170701)
+str(eel_sub)
+levels(as.factor(eel_sub$YYYYMMDD))
+summary(eel_sub)
+eel_sub2 <- na.omit(data.frame(eel_sub$shoot_dw, eel_sub$max_length, eel_sub$mean_length, eel_sub$shoot_mass_fw))
+names(eel_sub2) <- c("shoot_dw", "max_length", "mean_length", "shoot_mass_fw")
+```
+
+# Look at data
+```{r}
+plot(eel_sub2$max_length, eel_sub2$shoot_dw)
+# Looks like the variance in shoot dw might be increasing with the the length (mm) of the longest blade. 
+plot(eel_sub2$mean_length, eel_sub2$shoot_dw)
+plot(eel_sub2$max_length, eel_sub2$shoot_mass_fw)
+# not as tight as a correlation
+cor(eel_sub2$max_length, eel_sub2$shoot_dw, use = "complete.obs")
+cor(eel_sub2$mean_length, eel_sub2$shoot_dw, use = "complete.obs")
+cor(eel_sub2$mean_length, eel_sub2$shoot_mass_fw, use = "complete.obs")
+# stronger positive linear relationship with max length than average length (makes sense)
+par(mfrow=c(1,2))
+boxplot(eel_sub2$max_length)
+boxplot(eel_sub2$shoot_dw)
+# Looks like both varibles may have some outliers, in particular the shoot dry weight. 
+
+par(mfrow=c(1,2))
+plot(density(eel_sub2$max_length), ylab = "Frequency")
+plot(density(eel_sub2$shoot_dw, na.rm = T), ylab = "Frequency")
+
+hist(eel_sub2$max_length)
+# max length looks pretty normal with some slight right? skew
+hist(eel_sub2$shoot_dw)
+# heavily right skewed does log make it look better?
+hist(log(eel_sub2$shoot_dw))
+# skews it the other way... 
+
+
+
+```
+
+# Linear models
+## data only before july
+```{r}
+
+dat <- na.omit(data.frame(eel_sub2$shoot_dw, eel_sub2$max_length))
+names(dat) <- c("dw", "max_length")
+
+plot(dat$dw, dat$max_length)
+# Lets fit an untransformed linear model 
+fit.lm <- lm(dw ~ max_length, data = dat)
+plot(fit.lm)
+# looks like there might be some funky stuff happening with the residuals -- maybe an increase in variance along the fitted values. And the QQ plot looks real gross with some concavity (i.e. skewness) and some possible outliers. The cooks plot makes it look like there case numbers (171, 230, 498) could be influencial outliers. Some of this is consisten with the histogram of the data (see above)
+summary(fit.lm)
+AIC(fit.lm); BIC(fit.lm)
+# looks like max length is significantly different than 0
+# Has an adjusted r2 of 69%... pretty good for ecology. Model is significant, coefficients for the model are not equal to zero (p value =~0)
+library(e1071)
+skewness(dat$dw)
+skewness(dat$max_length)
+# the response variable is skewed.... highly skewed
+
+e <- residuals(fit.lm)
+shapiro.test(e)
+n <- length(dat$dw)
+
+ggplot(dat, aes(x = max_length, y = dw)) + geom_point() + theme_classic() +
+  geom_smooth(method = "lm", se = TRUE)
+
+
+# Does a boxcox indicate a transformation is necessary? 
+library(MASS)
+boxcox(fit.lm)
+boxcox(fit.lm, lambda=seq(from=0, to=0.6, by=.01)) 
+# Umm of like square root?
+# Could also try a log
+
+
+
+hist(dat$dw^0.5)
+y.2 <- dat$y^(0.5)
+# looks way better with a fourth root transformation, normal distribution
+fit2 <- lm(dw^(0.5) ~ max_length, data = dat)
+plot(fit2)
+# looks a lot better, homoscedascity is good, qq plot tails are a little weird, still some outliers
+summary(fit2)
+# r squared is better, model is still significant
+plot(dat$max_length, dat$dw^(0.5))
+
+# Plot the square root transformed data
+lm_eqn <- function(dat){
+    m <- fit2;
+    eq <- substitute(italic(sqrt(y)) == a + b %.% italic(x)*","~~italic(r)^2~"="~r2, 
+         list(a = format(unname(coef(m)[1]), digits = 2),
+              b = format(unname(coef(m)[2]), digits = 2),
+             r2 = format(summary(m)$r.squared, digits = 3)))
+    as.character(as.expression(eq));
+}
+ggplot(dat, aes(x = max_length, y = dw^(0.5))) + geom_point() + geom_smooth(method = "lm", se = TRUE, level = 0.95) + geom_text(x = 25, y = 0.8, label = lm_eqn(dat), parse = TRUE, check_overlap = TRUE) + theme_classic()
+
+
+# Compare to a logtransformed model (easier to understand)
+
+fit3 <- lm(log(dw) ~ max_length, data = dat)
+plot(fit3)
+summary(fit3)
+hist(log(dat$dw))
+
+plot(dat$max_length, log(dat$dw))
+
+# log-log transformation
+lm2 <- lm(log(shoot_dw) ~ log(max_length), data = eel_sub2)
+summary(lm2)
+plot(lm2)
+
+# plot the log-log transformed data with linear model 
+lm_eqn <- function(dat){
+    m <- lm2;
+    eq <- substitute(italic(log(y)) == a + b %.% italic(log(x))*","~~italic(r)^2~"="~r2, 
+         list(a = format(unname(coef(m)[1]), digits = 2),
+              b = format(unname(coef(m)[2]), digits = 2),
+             r2 = format(summary(m)$r.squared, digits = 3)))
+    as.character(as.expression(eq));
+}
+ggplot(dat, aes(x = log(max_length), y = log(dw))) + geom_point() + geom_smooth(method = "lm", se = TRUE, level = 0.95) + geom_text(x = 2.5, y = -0.5, label = lm_eqn(dat), parse = TRUE, check_overlap = TRUE) + 
+  theme_classic()
+
+visreg(lm2, gg = T)
+```
+
+# Use selected linear model to predict 2019 biomass data
+## Import 2019 data
+The data for 2019: is set up in a 3 sheet excel spreadsheets. quadrat_ID in hab_qrt is unique for *every*
+quadrat that was done in summer 2019. Use the quadrat_ID to connect to the other sheets (hab_lng and hab_wgt). Hab_lng has all the individual lengths for all measured plants (in mm) (for eelgrass its 15 blades from each quadrat/site. For kelp its up to 3 of each species collected from the site). Hab_wgt has the biomass weights for individual species biomass by bag
+
+For this purpose we are interested in only the length data but need to use the quadrat sheet to make sure we only are looking at the eelgrass sites
+newest version of data is : RAW_10-22-19
+```{r}
+hab_qrt <- read_excel("../ALL_DATA/Lia_fish/Habitat_2019_RAW_10-23-19.xlsx", sheet = 1)
+hab_lng <- read_excel("../ALL_DATA/Lia_fish/Habitat_2019_RAW_10-23-19.xlsx", sheet = 2)
+hab_wgt <- read_excel("../ALL_DATA/Lia_fish/Habitat_2019_RAW_10-23-19.xlsx", sheet = 3)
+```
+
+
+## Data cleaning
+We want only the eelgrass sites and need to convert the length measurements (in mm) to cm 
+``` {r}
+glimpse(hab_qrt)
+
+# Want to only extract the quadrat numbers that were used to sample eelgrass sites
+eel_qrts <- na.omit(ifelse(hab_qrt$habitat == "seagrass", paste(hab_qrt$quadrat_ID), NA))
+# subset the length data by quadrat at an eelgrass site
+lng_sub <- subset(hab_lng, quadrat_ID %in% eel_qrts)
+levels(as.factor(lng_sub$species)) # only Z. marina, awesome! 
+
+lng_sub <- lng_sub %>%
+  mutate(length_cm = length/100)
+
+```
+
+## Predict based on linear models
+```{r}
+summary(lm2)
+# formula :
+#   log (y) = beta0 + beta1 * log (x) 
+#   log (dw) = -7.78 + 1.57 * log (max_length) 
+# create a new dataframe with the leaf lengths from 2019
+newx <- data.frame(max_length = as.numeric(lng_sub$length_cm))
+# use the log-log linear model (equation above) to calculate the dry mass of the shoot with 95% CI 
+# make sure to exp() the values because its a log-log relationship
+pr.lm <- exp(predict(lm2, newdata = newx, interval = "confidence", level = 0.95))
+
+# graph these new predicted values
+# create data.frame first
+newdata <- cbind(lng_sub, pr.lm)
+ggplot(newdata, aes(x = length_cm, y = fit)) + geom_point() + theme_classic() + geom_smooth(method = "lm")
+
+
+```
+
+
+## Estimate total biomass 
+``` {r}
+str(newdata)
+str(hab_qrt)
+hab_qrt$density <- as.numeric(hab_qrt$density)
+hab_qrt$flowering_shoots <- as.numeric(hab_qrt$flowering_shoots)
+# Want to only extract the quadrat numbers that were used to sample eelgrass sites
+dsty <- hab_qrt %>%
+  filter(habitat == 'seagrass') %>%
+  mutate(density_m2 = (density)*4) %>%
+  mutate(flowering_m2 = (flowering_shoots)*4)
+dsty <- dsty[,c(1,8,9,11,12)]
+
+# calculate average biomass for 15 shoots for each quadrat
+require(dplyr)
+df <- newdata %>%
+  group_by(quadrat_ID) %>%
+  mutate(avg_biomass = mean(fit))
+df1 <- df %>%
+  dplyr::select(quadrat_ID, avg_biomass) %>%
+  distinct()
+
+# need to add back in site information
+
+df2 <- left_join(df1, dsty, by = "quadrat_ID")
+df3 <- left_join(df2, hab_qrt[,1:2], by = "quadrat_ID")
+write.csv(df3, "../ALL_DATA/seagrass_biomass_conversions.csv") 
+```
