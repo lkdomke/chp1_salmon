@@ -3,6 +3,8 @@ title: "EDA_salmon_data"
 author: "Lia Domke"
 date: "10/7/2019"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 # Libraries
@@ -25,12 +27,18 @@ This file is based on the "DataCleaning_Seine_2019" R Markdown script. Extracted
 
 allsites - includes distance to anadramous stream for all noaa sites and 17/19 sites. 
 ```{r, echo = FALSE}
-dat <- read.csv("FISH604_combined_10-5-19.csv")
-allsites <- read_xls("../ALL_DATA/Lia_fish/dist2_anad_allsites_102319.xls", sheet = 1)
-biom <- read.csv("../ALL_DATA/seagrass_biomass_conversions.csv") 
-eel17 <- read.csv("..//ALL_DATA/seagrass_biometrics_CLEAN.csv")
-env17 <- read.csv("../ALL_DATA/eelgrass_bio_sed_transect_derived.csv")
-name <- read.csv("site_code_names.csv", header = TRUE)
+dat <- read.csv("Data/FISH604_combined_10-5-19.csv", stringsAsFactors = FALSE, header = TRUE)
+
+allsites <- read_xls("../APECS Master repository/APECS Master repo/ALL_DATA/Lia_fish/dist2_anad_allsites_102319.xls", sheet = 1) # not on KNB
+
+biom <- read.csv("../APECS Master repository/APECS Master repo/ALL_DATA/seagrass_biomass_conversions.csv",
+                 stringsAsFactors = FALSE, header = TRUE) # not on KNB
+
+eel17 <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3Ac79aa46e-5e20-4559-86e5-64166af2cf94", method = "libcurl"),stringsAsFactors = FALSE, header = TRUE)
+
+env17 <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3A5e946e41-4f5f-4499-9969-766f01113971", method = "libcurl"), stringsAsFactors = FALSE, header = TRUE)
+
+name <- read.csv("Data/site_code_names.csv", stringsAsFactors = FALSE, header = TRUE) # updated location 9/20
 
 ```
 # Data Clean up
@@ -41,7 +49,7 @@ NOTE!! removed Julian day > 180 filter
 glimpse(dat)
 
 # do some minor clean up 
-dat <- dat[-42,-1]
+dat <- dat[-42,-1] # removes first column and second calder bay survey (didn't happen)
 dat$year <- as.factor(dat$year)
 dat[,25:29] <- data.frame(lapply(dat[,25:29], as.numeric), stringsAsFactors = FALSE) # make sure salmon abundance is numeric
 dat1 <- dat %>%
@@ -55,7 +63,7 @@ allsites needs to be combined with environmental information about the sites
 ```{r}
 str(allsites)
 # 2017 2019 sites information is at the bottom
-dist <- allsites[616:661,-c(1:2,4:6,11)]
+dist <- allsites[616:661,-c(1:2,4:6,11)] # this is the straightline distance to nearest stream
 
 dist17 <- dist %>%
   filter(habitat == "eelgrass", year == "2017")%>%
@@ -117,9 +125,13 @@ biom17 <- eel17 %>%
   group_by(site, quadrat) %>%
   summarise(avg_shoot_dw = mean(shoot_dw))
 
+
 eel_hab17 <- env17 %>%
   mutate(year = "2017") %>%
-  mutate(date = ymd(date)) %>%
+  mutate(date = ymd(YYYYMMDD)) %>%
+  mutate(date_julian = yday(date)) %>%
+  mutate(eelgrass_shoots_msq = eelgrass_shoots_0.25msq * 4) %>%
+  mutate(flowering_shoots_msq = flowering_shoots_0.25msq * 4) %>%
   dplyr::select(quadrat, site, date, year, date_julian,
          eelgrass_shoots_msq,flowering_shoots_msq) %>%
   na.omit()
