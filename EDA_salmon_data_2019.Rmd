@@ -268,7 +268,6 @@ ggplot(data = dat, aes(x = reorder(site, -avg_density), y = avg_density, fill = 
 library(corrgram)
 corrgram(dat[,c(1,6,8,19,21,24,30)], lower.panel=panel.shade, upper.panel=panel.ellipse,
          diag.panel=panel.density)
-# No distinguishable pattern aside from the decline in abundance over time
 ```
 
 ### Model fitting and selection

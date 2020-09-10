@@ -3,6 +3,8 @@ title: "NOAA_Seine_ByHab-salmon"
 author: "Lia Domke"
 date: "10/23/2019"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 # Libraries
 ```{r, include = FALSE}
@@ -13,8 +15,10 @@ library(vegan)
 ```
 # Input Data
 ```{r, include = FALSE}
-allsites <- read_xls("../ALL_DATA/Lia_fish/dist2_anad_allsites_102319.xls", sheet = 1)
-fish <- read.csv("../ALL_DATA/noaa_seak_fish_atlas_CLEAN.csv")
+allsites <- read_xls("../APECS Master repository/APECS Master repo/ALL_DATA/Lia_fish/dist2_anad_allsites_102319.xls", sheet = 1) # has the dist to anad stream for all sites
+
+fish <- read.csv("../APECS Master repository/APECS Master repo/ALL_DATA/noaa_seak_fish_atlas_CLEAN.csv",
+                 stringsAsFactors = FALSE, header = TRUE) # fish beach seine data
 ```
 
 # Data cleaning
@@ -90,7 +94,7 @@ sal_long <- df_long %>%
 sal_wide <- dcast(sal_long, SiteID + EventID + Date + Mon + Season + Year ~ SpCode, value.var = "abundance", fill = 0) 
 
 # REMOVE ALL SEINES WHERE THEY CAUGHT LESS THAN 10 SALMON
-sal_wide <- sal_wide[which(rowSums(sal_wide[,7:11]) > 10),]
+# sal_wide <- sal_wide[which(rowSums(sal_wide[,7:11]) > 10),] # this is good to do for nmds analysis
 sal_long <- melt(sal_wide, id = c("SiteID", "EventID", "Date", "Mon", "Season", "Year"), variable.name = "SpCode", value.name = "abundance" )
 
 ```
