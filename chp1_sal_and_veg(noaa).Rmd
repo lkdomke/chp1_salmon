@@ -19,19 +19,24 @@ Steps to do this:
 
 3. Include biomass too, calculate biomass for each of the salmon species caught based on the fork length. 
 
+# Libraries
 ```{r libraries}
 library(tidyverse)
+require(leaflet)
+require(rgdal)
 ```
 
-
+# Data
 ```{r data}
-noaa <- read.csv("../APECS Master repository/APECS Master repo/ALL_DATA/Lia_fish/noaa_seine_clean_dist.csv", 
+#noaa <- read.csv("../APECS Master repository/APECS Master repo/ALL_DATA/Lia_fish/noaa_seine_clean_dist.csv", 
                  stringsAsFactors = FALSE, header = TRUE)
+
+noaa <- read.csv("../APECS Master repository/APECS Master repo/ALL_DATA/Lia_fish/noaa_seak_fish_atlas_CLEAN_LD.csv")
 
 fishLW <- read.csv("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3A42b3eee9-f6a3-4169-99ef-ed388f46d172", stringsAsFactors = FALSE, header = TRUE)
 ```
 
-
+# Cleaning
 Minor cleaning to make sure we're only looking at Southeast data and that there are 0's for sites were we didn't catch any salmon
 Subset data to include only salmon data
 ```{r cleaning}
@@ -42,11 +47,17 @@ noaa$EventID <- as.character(noaa$EventID)
 # double check to make sure we're only looking at SEAK and BSEINE gear
 seak_fish <- noaa %>%
   filter(Region == "southeastern Alaska", Gear == "BSEINE") %>%
-  rename(Dist_anad_m = NEAR_DIST, Latitude = Lat1, Longitude = Long1)
+  rename(Latitude = Lat1, Longitude = Long1)
 
 # Extract environmental only data 
 env <- seak_fish %>%
-  dplyr::select(SiteID, EventID, Date, Year, Temp, Salinity, Dist_anad_m, Habitat, Latitude, Longitude) %>%
+  dplyr::select(SiteID, EventID, Date, Year, Temp, Salinity, Habitat, Latitude, Longitude) %>%
+  distinct()
+
+# location data
+loc <- seak_fish %>%
+  #rename(Location = Location.y, SubLocale = SubLocale.y) %>%
+  dplyr::select(SiteID, EventID, Date, Year, Gear, Region, Locale, Location, SubLocale) %>%
   distinct()
 
 # Calculate fish abundance, can later sum this if interested in only abundance
@@ -55,11 +66,12 @@ seak_fish$abundance <- as.numeric(ifelse(is.na(seak_fish$Length), paste(seak_fis
 
 
 # extract full list of site info (SiteID, EventID)
-SiteID <- unique(seak_fish$SiteID) # 303 unique sites
-EventID <- unique(seak_fish$EventID) # 615 total seines done
+SiteID <- unique(seak_fish$SiteID) # 303 unique sites (updated #396)
+EventID <- unique(seak_fish$EventID) # 615 total seines done (updated #798)
 Site_info <- unique(subset(seak_fish, select = c("SiteID", "EventID", "Latitude", "Longitude", "Locale", "Habitat"))) # all unique seines
 ```
 
+# Data prep
 Want to run a loop so that, for each species caught, we can estimate fork length for the unmeausred fish but also estimate biomass for both. 
 ```{r}
 # make sure columns have appropriate character type
@@ -69,9 +81,18 @@ seak_fish$EventID <- as.character(seak_fish$EventID)
 
 # only need salmon, otherwise there are a lot of fish we don't have length-weight info for:
 seak_sal <- seak_fish %>%
+  filter(taxon != "invertebrate") %>%
   filter(SpCode == "SALCHUM" | SpCode == "SALCOHO"| 
       SpCode == "SALSOCK"| SpCode == "SALCHIN"
       | SpCode == "SALPINK")
+
+# How many salmon total did we catch? 
+pre_loop <- seak_sal %>% 
+  dplyr::summarise(count = sum(abundance)) # (# updated seines 149329)
+
+pre_site_sp <- seak_sal %>%
+  group_by(SiteID, EventID, SpCode) %>%
+  dplyr::summarise(pre_count = sum(abundance))
 ## Separate measured and unmeasured fish
 
 fish.m <- seak_sal %>%
@@ -99,9 +120,9 @@ fish.um <- seak_sal %>%
 
 
 # figure out which species at sites that there is not a measured conterpart 
-x <- fish.um %>%
-  group_by(EventID, SpCode) %>%
-  anti_join(fish.m, by = c("EventID", "SpCode")) # clearly there are lots of situations where during a seine they didn't measure any fish and only counted them--making biomass conversions impossible?
+#  x <- fish.um %>%
+#  group_by(EventID, SpCode) %>%
+#  anti_join(fish.m, by = c("EventID", "SpCode")) # clearly there are lots of situations where during a seine they didn't measure any fish and only counted them--making biomass conversions impossible?
 
 # Which fish do we not have length-width conversions?
 y <- fish.um %>%
@@ -109,10 +130,11 @@ y <- fish.um %>%
 
 # remove the sockeye, we'll try and go ahead and do the conversions for the fish we have info for
 fish.um.redu <- fish.um %>%
-  filter(SpCode != "SALSOCK") %>%
-  anti_join(x, by = c("EventID", "SpCode")) # this removes the instances that we didn't have measured counterparts for the measured data
+  filter(SpCode != "SALSOCK") #%>%
+  #anti_join(x, by = c("EventID", "SpCode")) # this removes the instances that we didn't have measured counterparts for the measured data
 ```
 
+# Subset where not enough fish measured
 Before we run the loop to extrapolate lengths, we should make sure that there are enough measured fish to be able to extrapolate to the unmeasured ones (n = 30). 
 ```{r}
 # make a loop
@@ -145,7 +167,7 @@ fish.um.redu <- left_join(fish.um.redu, f) %>%
 
 ```
 
-
+# Length loop!
 run the loops!
 ```{r}
 d <- data.frame() # empty dataframe to fill with for loop
@@ -159,8 +181,9 @@ for(s in unique(fish.um.redu$EventID)){ # cycle through site by unique seines (E
       samp <- dat.m %>% # create sample from which to make distrubution
         filter(SpCode == i)
       unmeas <- dat.um %>% # isolate unmeasured fish
-        filter(SpCode == i)
-      unmeas <- as.numeric(unmeas$Unmeasured) # save unmeasured value
+        filter(SpCode == i) %>%
+        dplyr::summarise(unmeas = sum(Unmeasured)) # sums more than one entry of unmeasured at the same site/species
+      unmeas <- as.numeric(unmeas$unmeas) # save unmeasured value
       dat <- data.frame(size = as.character(samp$Length))
       dat2 <- dat %>% 
         group_by(size) %>% 
@@ -199,14 +222,17 @@ d.info <- d.info %>%
 fish.m.all <- bind_rows(d.info, fish.m)
 
 # add in unmeasured fish that did NOT have a measured counter part and were not included in the loop above
-# essentially this is the "x" data frame you anti_joined with fish.um to create fish.um.redu
-sal.all <- bind_rows(fish.m.all, x) %>%
-  dplyr::select(SiteID, EventID, Date, Mon, Year, Gear, Latitude, Longitude, SpCode, Sp_CommonName, Sp_ScientificName, Length, Unmeasured, abundance)
+# these are the fish excluded and sockeye salmon 
 
-# add in the last unmeasured set of fish 
-sal.all <- excluded.fish %>%
-  dplyr::select(-X) %>%
-  bind_rows(sal.all, excluded.fish)
+sal.all <- fish.m.all %>%
+  bind_rows(excluded.fish) %>%
+  bind_rows(y) %>%
+  dplyr::select(-c(X, keep))
+
+# check to make sure we have the same number of salmon we started with (125450, updated 149329)
+sal.all$abundance <- as.numeric(ifelse(is.na(sal.all$Length), paste(sal.all$Unmeasured), 1))
+sal.all %>%
+  dplyr::summarise(sum = sum(abundance)) # woo!
 
 # do an full join, meaning that we're retaining all rows. This should join the salmon sites together and then add in non salmon sites
 non_sal <- anti_join(Site_info, sal.all)
@@ -226,43 +252,78 @@ fish.count <- fish.all %>%
   dplyr::select(SiteID, EventID, Date, Mon, Year, Gear, Latitude, Longitude, SpCode, Sp_CommonName, 
                 Sp_ScientificName, abundance, Locale, Habitat) %>%
   group_by(SiteID, EventID, SpCode) %>%
-  dplyr::summarise(abundance)
+  dplyr::summarise(abundance = sum(abundance))
+
+# quick checks
+fish.all %>%
+  dplyr::summarise(post_count = sum(abundance, na.rm = TRUE))
 
 fish_lng <- fish.all %>%
-  filter(Length != "NA")
+  filter(Length != "NA") # sites where there are no lenght data does NOT mean that no salmon were caught there, just that no salmon were measured there and *might have* been caught. 
 ```
 
-
+# Get 0's
+For the following purposes we're going to use the `fish.count` dataframe
 
 Calculate 0's for sites no salmon were caught
 ```{r}
+# add back in the site info
+fish.counts <- left_join(fish.count, env) %>%
+  left_join(loc)
+
 # long --> wide
 # This includes ALL species (not just salmon). We'll leave this for now because it matches the
 # environmental dataframe. But eventually we'll have to remove the non-salmon species. BUT we want
 # retain the 0 where a seine was done but no salmon were caught. 
-df_wide <- dcast(seine, SiteID + EventID + Date + Mon + Year + Gear + Longitude + Latitude ~ SpCode, value.var = "abundance", fill = 0)
-
+df_wide <- pivot_wider(fish.counts, id_cols = c(SiteID, EventID, Locale, SubLocale, Date, Year, Latitude, Longitude, Habitat), names_from = SpCode, values_from = abundance) %>%
+  dplyr::select(-"NA") %>%
+  replace(is.na(.), 0)
 
 # wide -- > long, convserves zeros and site/event ID information
 
-df_long <- melt(df_wide, id = c("SiteID", "EventID", "Date", "Mon", "Season", "Year"), variable.name = "SpCode", value.name = "abundance" )
+df_long <- pivot_longer(df_wide, cols = c(SALCHIN, SALCOHO, SALPINK, SALCHUM, SALSOCK), names_to = "SpCode", values_to = "abundance")
 
-#only salmon
-sal_long <- df_long %>%
-  filter(SpCode == "SALCHUM" | SpCode == "SALCOHO"| 
-      SpCode == "SALSOCK"| SpCode == "SALCHIN"
-      | SpCode == "SALPINK")
-
-# keeping all the zeros go back to wide! 
-sal_wide <- dcast(sal_long, SiteID + EventID + Date + Mon + Season + Year ~ SpCode, value.var = "abundance", fill = 0) 
 
 # REMOVE ALL SEINES WHERE THEY CAUGHT LESS THAN 10 SALMON
 # sal_wide <- sal_wide[which(rowSums(sal_wide[,7:11]) > 10),] # this is good to do for nmds analysis
-sal_long <- melt(sal_wide, id = c("SiteID", "EventID", "Date", "Mon", "Season", "Year"), variable.name = "SpCode", value.name = "abundance" )
+# sal_long <- melt(sal_wide, id = c("SiteID", "EventID", "Date", "Mon", "Season", "Year"), variable.name = "SpCode", value.name = "abundance" )
 ```
 
-Now we have three dataframes to be working with. 
-1. sal_wide - salmon abundances for all sites in a wide format
-2. sal_long - same data as the wide df but long
+Now we have four dataframes to be working with. 
+1. df_wide - salmon abundances for all sites in a wide format
+2. df_long - same data as the wide df but long
 3. env - environmental data in a wide format
+4. loc - location information for each site (included with df_wide and df_long)
+
+# Map
+Lets map out the sites so that we can see where the diff sites are location and we can 
+```{r map}
+# make sure the habitat column is a factor with only 4 levels
+fish.counts$Habitat <- as.factor(fish.counts$Habitat)
+levels(fish.counts$Habitat)[levels(fish.counts$Habitat)=="Sand-Gravel"] <- "Sand-gravel"
+levels(fish.counts$Habitat)[levels(fish.counts$Habitat)=="Surfgrass"] <- "Kelp"
+
+# Prince of Wales Water Polygon
+h2o.utm <- readOGR(dsn = "../APECS Master repository/APECS Master repo/ALL_DATA/spatial_data", layer = "POW_water_UTM")
+h2o.latlong <- spTransform(h2o.utm, CRS("+init=epsg:4326"))
+
+# Set up icons
+icon.hab <- awesomeIcons(icon = "map_pin", 
+                          markerColor = ifelse(fish.counts$Habitat == "Kelp", "orange", 
+                                               ifelse(fish.counts$Habitat == "Eelgrass", "green",
+                                                      ifelse(fish.counts$Habitat == "Bedrock", "gray",
+                                                             ifelse(fish.counts$Habitat == "Sand-gravel", "red", "blue")))
+                                               ), library = "fa", iconColor = "black")
+
+# Create the map
+require(leaflet)
+m <- leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(data = h2o.latlong, stroke = NA, fillColor = "blue", 
+                                  fillOpacity = 0.8, group = "POW") %>%
+  addAwesomeMarkers(data = fish.counts, ~Longitude, ~Latitude, label = ~EventID, icon = icon.hab)
+# require(htmlwidgets)
+# saveWidget(m, file="m.html")
+m
+```
 
