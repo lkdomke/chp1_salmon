@@ -28,8 +28,10 @@ require(rgdal)
 
 # Data
 ```{r data}
+# this dataset has the distance from anad stream which is good, but for some reason a couple sites where bedrock was seined there is no distance measurement. 
 #noaa <- read.csv("../APECS Master repository/APECS Master repo/ALL_DATA/Lia_fish/noaa_seine_clean_dist.csv", 
-                 stringsAsFactors = FALSE, header = TRUE)
+                 # stringsAsFactors = FALSE, header = TRUE) 
+
 
 noaa <- read.csv("../APECS Master repository/APECS Master repo/ALL_DATA/Lia_fish/noaa_seak_fish_atlas_CLEAN_LD.csv")
 
@@ -321,9 +323,145 @@ m <- leaflet() %>%
   addTiles() %>% 
   addPolygons(data = h2o.latlong, stroke = NA, fillColor = "blue", 
                                   fillOpacity = 0.8, group = "POW") %>%
-  addAwesomeMarkers(data = fish.counts, ~Longitude, ~Latitude, label = ~EventID, icon = icon.hab)
+  addAwesomeMarkers(data = fish.counts, ~Longitude, ~Latitude, label = ~SiteID, icon = icon.hab)
 # require(htmlwidgets)
 # saveWidget(m, file="m.html")
 m
+```
+
+Based on looking at the map and information about how Johnson et al., 2012 defines southern Southeast Outside there are 8 paired sites that are good comparisons of vegetated versus unvegated habitat. Vegetation either means eelgrass or understory kelp whereas unvegetated means bedrock or sand/gravel. Only *two* sites in Klawock Inlet/Fish Egg area have a sand/gravel - eelgrass comparison. The rest of the 6 sites are bedrock (unveg) versus kelp AND eelgrass.
+
+Additionally, there are a few other "maybe" sites. One site (EventID 573 and 574) is a bedrock-eelgrass comparison on close but seperate islands in the South Wadleigh area. Another maybe site involves a bedrock site (EventID 575) that is located on Wadleigh Island *across* Klawock Inlet from kelp sites (402/403) and eelgrass sites (364/365). 
+
+First lets subset the "all sites data" into just the sites that we can pair so we can check timing of seines. 
+# Pair sites
+```{r}
+# Did the comparison sites happen within the same month/year? 
+# One of the "maybe sites from above (EventIDs 575 w/ 402, 403, 364, 365) shouldn't be included because
+# the seines in the unveg site happened in June '98 whereas the others happened in July '99. Could do a 
+# comparison between eelgrass and kelp but thats it. The other maybe can be included. Drop the bad site
+
+# Also, two of the klawock sites happened in SEPTEMBER. There's no chance of seeing salmon in the nearshore that late in summer, drop 248, 241, 240
+# Lets create a list we can subset the data by
+
+EventID_comp <- c(244, 245, 240, 241, 571, 572, 3168, 3170, 3169, 3173, 3172, 3174, 3171, 3181, 3179, 3180, 3177, 3178, 3175, 3176,  3188, 3186, 3187, 3191, 3189, 3190, 573, 574)
+
+# subset the data
+fish.count.sub <- subset(fish.counts, EventID %in% EventID_comp)
+
+# but wait what if there were more than one seine at this site?
+SiteID_comp <- fish.count.sub$SiteID
+fish.sub <- subset(fish.counts, SiteID %in% SiteID_comp) # yea in particular in klawock inlet
+# include only the klawock inlet seines that happened in May (EventIDs 244/245 and 236/237)
+# create dataframe to antijoin
+drop <- fish.sub %>%
+  filter(SiteID == "133" & EventID != "244" | 
+           SiteID == "134" & EventID != "245"|
+           SiteID == "131" & EventID != "236"|
+           SiteID == "132" & EventID != "237")
+
+fish.sub <- fish.sub %>%
+  anti_join(drop)
+
+# finaaallly lets create a column that pairs the sites
+pair.fish <- fish.sub %>%
+  group_by(Locale) %>%
+  mutate(site_pair = ifelse(Locale %in% "Moira Sound", "Moira Sound", 
+                            ifelse(Locale %in% "Nichols Bay", "Nicols Bay", 
+                                   ifelse(Locale %in% "Kah Shakes Cove", "Kah Shakes Cove",
+                                          ifelse(Locale %in% "Reef Harbor", "Reef Harbor",
+                                                 ifelse(Locale %in% "Sylburn Harbor", "Sylburn Harbor", 
+                                                        ifelse(Locale %in% "Dall Bay", "Dall Bay",
+                                                               ifelse(SubLocale %in% "Ballena Island", "Ballena Island",
+                                                                      ifelse(SubLocale %in% c("Clam Island","Wadleigh Island"), "South Wadleigh", "Klawock Inlet")))))))))
+```
+
+Okay now that we only have the sites we're for sure interested and we made sure that they were done in the same timeframe (generally within a few days of each other) and that we've paired them by site_pair -- lets do some exploratory analysis of salmon cpue.
+# Exploratory graphs
+```{r theme settings}
+# Creates custom base plot theme that can adjust every graph that you use plot_theme for!
+
+plot_theme <- function() {
+  theme_bw(base_size = 14, base_family = "Avenir") %+replace%
+    theme(panel.background  = element_blank(),
+            plot.background = element_rect(fill="gray96", colour=NA), 
+            legend.background = element_rect(fill="transparent", colour=NA),
+            legend.key = element_rect(fill="transparent", colour=NA),
+            panel.grid.major = element_blank(), 
+            panel.grid.minor = element_blank(),
+            strip.background = element_rect(colour = "NA", fill = "gray96"))
+}
+
+# to use ggsave and export plots include argument 'device=cario_pdf' e.g.: 
+# ggsave("name.pdf", device=cairo_pdf, width = 6, height = 6)
+```
+
+```{r}
+# avg multiple adj sites that occurred in the same hab
+require(viridis) # for fun color palette
+
+fish.avg <- pair.fish %>%
+  group_by(site_pair, Habitat, SpCode) %>%
+  mutate(avg = mean(abundance), sd = sd(abundance)) %>%
+  mutate(avg = replace_na(avg, 0), sd = replace_na(sd, 0))
+```
+## Graph CPUE by habitat
+```{r g1}
+g1 <- fish.avg %>%
+  group_by(SiteID) %>%
+  drop_na(SpCode) %>%
+  ggplot() +
+  geom_bar(mapping = aes(x = Habitat, y = avg, fill = SpCode), 
+           position = "dodge", stat = "identity") +
+  geom_errorbar(mapping = aes(x = Habitat, ymax = avg+sd, ymin = avg-sd), 
+                width = 0, stat = "identity") +
+  xlab("Habitat") + ylab("CPUE") + 
+  facet_wrap(~site_pair) + 
+  plot_theme() +
+  geom_text(mapping = aes(x = Habitat, y = avg + 200, group = SpCode,
+                          label = format(avg, digits = 1, scientific = FALSE)),
+            colour = "black", position = position_dodge(0.9), hjust = 0.7)
+  
+g1 + scale_fill_brewer(name = "Species", labels = c("Chum", "Coho", "Pink"), palette = "Dark2")
+```
+
+Looking at average CPUE of salmon  in vegetated versus unvegetated sites
+```{r}
+fish.avg %>%
+  mutate(Hab_type = ifelse(Habitat %in% c("Bedrock", "Sand-gravel"), "Unvegetated", "Vegetated")) %>%
+  group_by(Hab_type) %>%
+  ggplot(mapping = aes(x = Hab_type, y = abundance)) +
+  geom_boxplot() +
+  xlab("Habitat type") + ylab("CPUE") +
+  plot_theme()
+```
+
+## Graph avg fish per unveg/veg
+```{r}
+fish.sum <- fish.avg %>%
+  drop_na(SpCode) %>%
+  mutate(Hab_type = ifelse(Habitat %in% c("Bedrock", "Sand-gravel"), "Unvegetated", "Vegetated")) %>%
+  group_by(Hab_type, SpCode) %>%
+  dplyr::summarise(avg = mean(abundance), sd = sd(abundance))
+
+g2 <- ggplot(data = fish.sum, aes(x = Hab_type, y = avg, ymin = avg-sd, ymax = avg+sd, fill = SpCode)) +
+  geom_bar(position = position_dodge(), aes(y = avg), stat = "identity") +
+  geom_errorbar(position = position_dodge(width = 0.9), colour = "black", width = 0.1) +
+  xlab("Habitat") + ylab("CPUE") +
+  plot_theme()
+g2 + scale_fill_brewer(name = "Species", labels = c("Chum", "Coho", "Pink"), palette = "Dark2")
+```
+
+Theres clearly a lot of variability in salmon catches, but at first glance at the graphs make it look like there isn't a large diff in the number of salmon caught in each hab, maybe with more salmon caught in the unvegetated habitat. 
+Lets use some GLMs to evaluate relationships between salmon catch in habitats
+
+# GLM explorations
+```{r data structure}
+# Need all the salmon data (all sites we've been working with above) and the associated environmental information
+# df for salmon : pair.fish
+# df for environmental : env
+
+
+
 ```
 
