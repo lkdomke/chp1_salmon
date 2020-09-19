@@ -21,18 +21,22 @@ Steps to do this:
 
 # Libraries
 ```{r libraries}
-library(tidyverse)
+library(dplyr)
 require(leaflet)
 require(rgdal)
+library(corrgram)
+library(lubridate)
+library(tidyr)
+library(ggplot2)
 ```
 
 # Data
 ```{r data}
 # this dataset has the distance from anad stream which is good, but for some reason a couple sites where bedrock was seined there is no distance measurement. 
-#noaa <- read.csv("../APECS Master repository/APECS Master repo/ALL_DATA/Lia_fish/noaa_seine_clean_dist.csv", 
-                 # stringsAsFactors = FALSE, header = TRUE) 
+anad_dist <- read.csv("../APECS Master repository/APECS Master repo/ALL_DATA/Lia_fish/noaa_seine_clean_dist.csv", 
+                 stringsAsFactors = FALSE, header = TRUE) 
 
-
+# use this df for all seine data (as of 9/16/20)
 noaa <- read.csv("../APECS Master repository/APECS Master repo/ALL_DATA/Lia_fish/noaa_seak_fish_atlas_CLEAN_LD.csv")
 
 fishLW <- read.csv("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3A42b3eee9-f6a3-4169-99ef-ed388f46d172", stringsAsFactors = FALSE, header = TRUE)
@@ -48,8 +52,8 @@ noaa$EventID <- as.character(noaa$EventID)
 
 # double check to make sure we're only looking at SEAK and BSEINE gear
 seak_fish <- noaa %>%
-  filter(Region == "southeastern Alaska", Gear == "BSEINE") %>%
-  rename(Latitude = Lat1, Longitude = Long1)
+  dplyr::filter(Region == "southeastern Alaska", Gear == "BSEINE") %>%
+  dplyr::rename(Latitude = Lat1, Longitude = Long1)
 
 # Extract environmental only data 
 env <- seak_fish %>%
@@ -452,16 +456,144 @@ g2 <- ggplot(data = fish.sum, aes(x = Hab_type, y = avg, ymin = avg-sd, ymax = a
 g2 + scale_fill_brewer(name = "Species", labels = c("Chum", "Coho", "Pink"), palette = "Dark2")
 ```
 
+## Catch by lat/long
+```{r}
+g <- sal_env %>%
+  drop_na(SpCode) %>%
+  ggplot() +
+  geom_point(aes(x = Latitude, y = Longitude, size = abundance, shape = Habitat)) +
+  plot_theme()
+g
+```
+
 Theres clearly a lot of variability in salmon catches, but at first glance at the graphs make it look like there isn't a large diff in the number of salmon caught in each hab, maybe with more salmon caught in the unvegetated habitat. 
+## Assesing distribution
+We've done some basic visualizations above, but lets also look at normality, outliers, collinearity, etc. As well as looking into transformations. 
+```{r}
+
+```
+
+
 Lets use some GLMs to evaluate relationships between salmon catch in habitats
 
 # GLM explorations
-```{r data structure}
+## Visualizations
+```{r data compilation}
 # Need all the salmon data (all sites we've been working with above) and the associated environmental information
 # df for salmon : pair.fish
-# df for environmental : env
+# environmental data are: temp, salinity, julian day, and anadromous stream dist. 
+# anadromous distance comes from df anad_dist
+anad_dist$SiteID <- as.character(anad_dist$SiteID)
+anad_dist$EventID  <- as.character(anad_dist$EventID)
 
+sal_env <- subset(anad_dist, SiteID %in% SiteID_comp) %>%
+  replace(is.na(.), 0) %>%
+  dplyr::select(SiteID, EventID, Date, NEAR_DIST, Locale, SubLocale.y) %>%
+  distinct() %>%
+  right_join(pair.fish) %>%
+  mutate(date = mdy(Date)) %>%
+  mutate(julian = yday(date)) %>%
+  mutate(dist_km = NEAR_DIST/100)
 
+# looks like theres a couple sites where we don't have environmental information. 
+# No temperature or salinity for: Ballena Island and South Wadleigh (plus no dist info)
+```
 
+```{r data structure}
+corrgram(sal_env[,c(8, 9:11, 21, 22)], lower.panel = panel.shade,
+         upper.panel = panel.cor, diag.panel = panel.density)
+
+# can we seperate the abundances by species to look at possible species based correlations?
+sal_env_wide <- pivot_wider(sal_env, names_from = SpCode, values_from = abundance)
+
+corrgram(sal_env_wide[,c(8,9, 19:23)], lower.panel = panel.shade, 
+         upper.panel = panel.cor, diag.panel = panel.density)
+# Looks like theres a couple explanatory parameters that shouldn't be included together since they're already strongly correlated. Temperature and Julian day
+```
+
+```{r}
+# Graph species abundance against distance from anad dist
+g <- sal_env %>%
+  drop_na(SpCode) %>%
+  ggplot(aes(x = dist_km, y = abundance, color = SpCode)) + 
+  geom_point(size = 2) + 
+  plot_theme() +
+  ylab("CPUE") + xlab("Distance from anadromous stream (km)")
+g3 <- g + scale_color_brewer(name = "Species", labels = c("Chum", "Coho", "Pink"), palette = "Dark2")
+```
+```{r}
+g4 <- sal_env %>%
+  drop_na(SpCode) %>%
+  ggplot(aes(x = Temp, y = abundance, color = SpCode)) + 
+  geom_point(size = 2) + 
+  plot_theme() +
+  ylab("CPUE") + xlab("Temperature (C)")
+g4 <- g4 + scale_color_brewer(name = "Species", labels = c("Chum", "Coho", "Pink"), palette = "Dark2")
+```
+```{r}
+g5 <- sal_env %>%
+  drop_na(SpCode) %>%
+  ggplot(aes(x = Salinity, y = abundance, color = SpCode)) + 
+  geom_point(size = 2) + 
+  plot_theme() +
+  ylab("CPUE") + xlab("Salinity")
+g5 <- g5 + scale_color_brewer(name = "Species", labels = c("Chum", "Coho", "Pink"), palette = "Dark2")
+```
+```{r}
+g6 <- sal_env %>%
+  drop_na(SpCode) %>%
+  ggplot(aes(x = julian, y = abundance, color = SpCode)) + 
+  geom_point(size = 2) + 
+  plot_theme() +
+  ylab("CPUE") + xlab("Julian day")
+g6 <- g6 + scale_color_brewer(name = "Species", labels = c("Chum", "Coho", "Pink"), palette = "Dark2")
+```
+
+Arrange the plots together to look at the same time
+```{r}
+library(cowplot)
+plot_grid(g3, g4, g5, g6,
+          labels = c("A", "B", "C", "D"),
+          ncol = 2, nrow = 2)
+```
+## Binomial 
+Lets first set up some explorations with binomial models to look at presence absence. 
+```{r}
+sal_env <- sal_env %>%
+  replace(is.na(.), 0) %>%
+  mutate(Hab_type = ifelse(Habitat %in% c("Bedrock", "Sand-gravel"), "Unvegetated", "Vegetated"))
+hist(as.numeric(sal_env$abundance > 0))
+
+plot((abundance > 0) ~ julian, data = sal_env)
+plot((abundance > 0) ~ Temp, data = sal_env)
+plot((abundance > 0) ~ Salinity, data = sal_env)
+plot((abundance > 0) ~ dist_km, data = sal_env)
+
+# convert to 0 & 1 for binomial models
+sal_env$binomial[sal_env$abundance > 0] <- 1
+sal_env$binomial[sal_env$abundance == 0] <- 0
+
+```
+
+```{r}
+# include a model with julian, salinity, habitat w/ interactions
+fit1 <- glm(binomial ~ Habitat + julian * I(julian^2)*Salinity * dist_km, family = binomial(link = logit), data = sal_env)
+summary(fit1) #... bizarre things are happening -- make sure you have a logical reason for including interaction
+
+# try without interaction
+fit2 <- glm(binomial ~ Habitat + julian + I(julian^2) + Salinity + dist_km, family = binomial(link = logit), data = sal_env)
+summary(fit2) # no parameters are significant
+
+# look at w/o intx w/ 2 hab types
+fit3 <- glm(binomial ~ Hab_type + julian + I(julian^2) + Salinity + dist_km, family = binomial(link = logit), data = sal_env)
+summary(fit3)
+
+# check out using temperature rather than julian day
+fit4 <- glm(binomial ~ Habitat * Temp * Salinity * dist_km, family = binomial(link = logit), data = sal_env)
+summary(fit4) # not ideal
+
+# try w/o intx 
+fit5 <- glm(binomial ~ Habitat + Temp + Salinity + dist_km, family = binomial(link = logit), data = sal_env)
+summary(fit5)
 ```
 
