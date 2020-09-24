@@ -28,6 +28,7 @@ library(corrgram)
 library(lubridate)
 library(tidyr)
 library(ggplot2)
+library(visreg)
 ```
 
 # Data
@@ -400,6 +401,27 @@ plot_theme <- function() {
 # ggsave("name.pdf", device=cairo_pdf, width = 6, height = 6)
 ```
 
+```{r data compilation}
+# Need all the salmon data (all sites we've been working with above) and the associated environmental information
+# df for salmon : pair.fish
+# environmental data are: temp, salinity, julian day, and anadromous stream dist. 
+# anadromous distance comes from df anad_dist
+anad_dist$SiteID <- as.character(anad_dist$SiteID)
+anad_dist$EventID  <- as.character(anad_dist$EventID)
+
+sal_env <- subset(anad_dist, SiteID %in% SiteID_comp) %>%
+  replace(is.na(.), 0) %>%
+  dplyr::select(SiteID, EventID, Date, NEAR_DIST, Locale, SubLocale.y) %>%
+  distinct() %>%
+  right_join(pair.fish) %>%
+  mutate(date = mdy(Date)) %>%
+  mutate(julian = yday(date)) %>%
+  mutate(dist_km = NEAR_DIST/100)
+
+# looks like theres a couple sites where we don't have environmental information. 
+# No temperature or salinity for: Ballena Island and South Wadleigh (plus no dist info)
+```
+
 ```{r}
 # avg multiple adj sites that occurred in the same hab
 require(viridis) # for fun color palette
@@ -461,16 +483,99 @@ g2 + scale_fill_brewer(name = "Species", labels = c("Chum", "Coho", "Pink"), pal
 g <- sal_env %>%
   drop_na(SpCode) %>%
   ggplot() +
-  geom_point(aes(x = Latitude, y = Longitude, size = abundance, shape = Habitat)) +
+  geom_point(aes(x = Longitude, y = Latitude, size = abundance, shape = Habitat)) +
   plot_theme()
 g
 ```
 
 Theres clearly a lot of variability in salmon catches, but at first glance at the graphs make it look like there isn't a large diff in the number of salmon caught in each hab, maybe with more salmon caught in the unvegetated habitat. 
-## Assesing distribution
+## Assesing distribution/normality
 We've done some basic visualizations above, but lets also look at normality, outliers, collinearity, etc. As well as looking into transformations. 
 ```{r}
+# abundance histograms
+hist(sal_env$abundance) # lots of zeros and a few large abundances
+hist(log(sal_env$abundance)) # looks slightly more normal...
+plot(density(sal_env$abundance))
 
+
+boxplot(abundance ~ SpCode, data = sal_env)
+boxplot(abundance ~ Habitat, data = sal_env)
+# boxplot by spcode and hab
+g3 <- sal_env %>%
+  drop_na(SpCode) %>%
+  ggplot() +
+  geom_boxplot(aes(x = SpCode, y = abundance, fill = Habitat)) +
+  plot_theme() +
+  ylab("CPUE") + xlab("Species Common Name") +
+  scale_x_discrete(breaks = c("SALCHUM", "SALCOHO", "SALPINK"),
+                   labels = c("Chum", "Coho", "Pink"))
+g3 + scale_fill_brewer(palette = "Dark2")
+
+# check fo normality (based on Mod3 Fish 604 course)
+x <- sort(sal_env$abundance)
+qqnorm(x) # plot sample points
+qqline(x) # plot normality line -- doesn't look normal not along line
+
+# appoximate log-normal distribution
+qqnorm(log(x)) # fits a lot better than no transformation, still not perf
+qqline(log(x)) # some skew along the tails
+
+hist(x) # same as above. heavy right skew
+hist(log(x)) # better but maybe still right skewed
+
+# 4th root 
+qqnorm((x^(1/4))) # log looks way better
+qqline((x^(1/4)))
+```
+
+So while investigating normality, a log transformation appears to most appropriate to appoximate normality in the cpue catch data for salmon. Now another question may be around outliers. It appears that there is one site where over 800 salmon were caught, is this an outlier? What does having the point do to the skew of the data?
+
+## Outliers
+```{r}
+plot(abundance ~ Habitat, data = sal_env) #point occured in an bedrock habitat
+boxplot(abundance ~ SpCode, data = sal_env) # was 800 pink salmon in bedrock
+# if you look at the dataset its row 19 at Johnson Cove (Site # 597) that is the potential outlier
+
+plot(abundance ~ Temp, type = "n", data = sal_env)
+points(abundance ~ Temp, subset = -19, cex = 1.5, data = sal_env)
+points(abundance ~ Temp, subset = 19, pch = 17, data = sal_env) # highlighted pot. outliner in triangle
+
+# In order to easily change which parameter we're looking at lets set up x1
+y <- sal_env$abundance
+x1 <- sal_env$dist_km
+
+# lets look at the residuals when we fit a linear model with Temp (and other variables?)
+fit.ln <- lm(y ~ x1, data = sal_env)
+summary(fit.ln)
+plot(fit.ln) 
+
+# looking at the residuals, the outlier (case # 19) appears to be an influential outlier. What happens to the residuals etc when we remove it?
+sal_env_red <- (sal_env[-19,])
+y2 <- sal_env_red$abundance
+x2 <- sal_env_red$dist_km
+
+fit.ln.out <- lm(y2 ~ x2)
+summary(fit.ln.out)
+plot(fit.ln.out)
+
+plot(y ~ x1, type = "n", xlab = "Distance from anadromous stream (km)", ylab = "CPUE")
+points(y ~ x1, subset = -19, cex = 1.5)
+points(y ~ x1, subset = 19, pch = 17) # highlighted pot. outliner in triangle
+abline(fit.ln) # add in linear regression line including outlier
+abline(fit.ln.out, lty = 2, col = "red") # linear regression w/o outlier
+
+# lets look at abundance across habitat type w/ and w/o the outlier
+boxplot(abundance ~ Habitat, data = sal_env_red)
+boxplot(abundance ~ Habitat, data = sal_env)
+g3 <- sal_env_red %>%
+  drop_na(SpCode) %>%
+  ggplot() +
+  geom_boxplot(aes(x = SpCode, y = abundance, fill = Habitat)) +
+  plot_theme() +
+  ylab("CPUE") + xlab("Species Common Name") +
+  scale_x_discrete(breaks = c("SALCHUM", "SALCOHO", "SALPINK"),
+                   labels = c("Chum", "Coho", "Pink"))
+g3 + scale_fill_brewer(palette = "Dark2")
 ```
 
 
@@ -478,26 +583,6 @@ Lets use some GLMs to evaluate relationships between salmon catch in habitats
 
 # GLM explorations
 ## Visualizations
-```{r data compilation}
-# Need all the salmon data (all sites we've been working with above) and the associated environmental information
-# df for salmon : pair.fish
-# environmental data are: temp, salinity, julian day, and anadromous stream dist. 
-# anadromous distance comes from df anad_dist
-anad_dist$SiteID <- as.character(anad_dist$SiteID)
-anad_dist$EventID  <- as.character(anad_dist$EventID)
-
-sal_env <- subset(anad_dist, SiteID %in% SiteID_comp) %>%
-  replace(is.na(.), 0) %>%
-  dplyr::select(SiteID, EventID, Date, NEAR_DIST, Locale, SubLocale.y) %>%
-  distinct() %>%
-  right_join(pair.fish) %>%
-  mutate(date = mdy(Date)) %>%
-  mutate(julian = yday(date)) %>%
-  mutate(dist_km = NEAR_DIST/100)
-
-# looks like theres a couple sites where we don't have environmental information. 
-# No temperature or salinity for: Ballena Island and South Wadleigh (plus no dist info)
-```
 
 ```{r data structure}
 corrgram(sal_env[,c(8, 9:11, 21, 22)], lower.panel = panel.shade,
@@ -569,31 +654,91 @@ plot((abundance > 0) ~ Temp, data = sal_env)
 plot((abundance > 0) ~ Salinity, data = sal_env)
 plot((abundance > 0) ~ dist_km, data = sal_env)
 
-# convert to 0 & 1 for binomial models
+# convert to 0 & 1 for binomial model
+sal_env$abundance[is.na(sal_env$abundance)] = 0
 sal_env$binomial[sal_env$abundance > 0] <- 1
 sal_env$binomial[sal_env$abundance == 0] <- 0
 
 ```
 
+What is our question? 
+For the binomial model, we're hypothesizing that habitat type (specifically the presence of vegetation in eelgrass and kelp habitats) will determine presence of salmon. Whereas unvegetated habitats will not  have fish. 
+
+Will include: julian day(+), salinity (no real correl), distance (-) with habitat types 
+In a seperate model include temp (no correl), salinity, and distance with habitat types
+Then compare the best model between the two
+
+1. First including julian day rather than temp
 ```{r}
-# include a model with julian, salinity, habitat w/ interactions
-fit1 <- glm(binomial ~ Habitat + julian * I(julian^2)*Salinity * dist_km, family = binomial(link = logit), data = sal_env)
-summary(fit1) #... bizarre things are happening -- make sure you have a logical reason for including interaction
+# 
+fit.bn.intx <- glm(binomial ~ I(julian^2) + julian + Habitat * Salinity + dist_km, family = binomial, data = sal_env)
+summary(fit.bn.intx) # based on the z-test 'summary' function there is likely no significant interaction. I checked both salinity * distance and julian day * salinity. This can be confirmed with a chi-square test
 
-# try without interaction
-fit2 <- glm(binomial ~ Habitat + julian + I(julian^2) + Salinity + dist_km, family = binomial(link = logit), data = sal_env)
-summary(fit2) # no parameters are significant
+anova(fit.bn.intx, test="Chisq") # confirmed there is no significant interaction. So only include additive parameters. 
 
-# look at w/o intx w/ 2 hab types
-fit3 <- glm(binomial ~ Hab_type + julian + I(julian^2) + Salinity + dist_km, family = binomial(link = logit), data = sal_env)
-summary(fit3)
+# model w/o intx
+fit.bn <- glm(binomial ~ I(julian ^2) + julian + Habitat +Salinity + dist_km, family = binomial, data = sal_env)
+summary(fit.bn)
 
-# check out using temperature rather than julian day
-fit4 <- glm(binomial ~ Habitat * Temp * Salinity * dist_km, family = binomial(link = logit), data = sal_env)
-summary(fit4) # not ideal
+AIC(fit.bn.intx, fit.bn) # keep the model w/o interactions. 
 
-# try w/o intx 
-fit5 <- glm(binomial ~ Habitat + Temp + Salinity + dist_km, family = binomial(link = logit), data = sal_env)
-summary(fit5)
+# Okay so now, in terms of our presence/absence models, do we need all these parameters. Lets drop salinity since when graphed against abund there wasn't any real correlation
+
+fit.bn2 <- glm(binomial ~ I(julian ^ 2) + julian + Habitat + dist_km, family = binomial, data = sal_env)
+summary(fit.bn2)
+
+# lets drop distance from anadramous stream as well
+fit.bn3 <- glm(binomial ~ I(julian ^ 2) + julian + Habitat, family = binomial, data = sal_env)
+summary(fit.bn3)
+
+# because there are only really two time frames that habitats were sampled (May and June) lets drop the quadratic for julian day
+
+fit.bn4 <- glm(binomial ~ julian + Habitat, family = binomial, data = sal_env)
+summary(fit.bn4) # hmm dropping the quadratic seems to not be as great
+
+fit.bn5 <- glm(binomial ~ Habitat, family = binomial, data = sal_env)
+summary(fit.bn5)
+
+# so since these models are *nested* meaning I sequentially dropped parameters, we can compare how well these models fit the data using AIC values. 
+
+AIC(fit.bn, fit.bn2, fit.bn3, fit.bn4, fit.bn5)
+# the AIC values are relatively close, but the 3rd and 5th models both have comparitively similar AIC values. At most the change in AIC is around 2 meaning that choosing the most parsimonious model may be a better choice. However, we need to employ our own logic about that system and since we know that salmon do outmigrate during the summer, julian day *should* stay in the model. 
+# Lets compare the two using likelihood ratio test
+anova(fit.bn5, fit.bn3, test = "LRT")
+# the null hypothesis (that the simplier model is the true model) was not rejected, meaning that fit.bn5 (w/o julian) is closer to the true model. 
+
+# However since we are interested in Habitat type and we know julian is important we'll keep both (model fit.bn3) as the true model for visualization. 
+
+visreg(fit.bn3, gg = TRUE, partial = FALSE)
+
+# whats the goodness of fit like? High two lines
+par(mfrow=c(2,2))
+plot(fit.bn3, which = 1:4) # Theres some issues of fit evidenced by some patterns in data (scale-location). 
+```
+
+2. Temperature instead of Julian day
+Because they are correlated slight (see pairwise scatterplot from above) we only want to include one or the either in a model. Lets do the same process as above and then use AIC values to test which is better!
+
+```{r}
+# Lets test interactions again
+fit.bn.intx2 <- glm(binomial ~ Temp * dist_km * Salinity + Habitat, family = binomial, data = sal_env)
+summary(fit.bn.intx2) # based on the z-test 'summary' function there is likely no significant interaction. I checked both salinity * distance and julian day * salinity. This can be confirmed with a chi-square test
+
+anova(fit.bn.intx2, test = "Chisq") # confirmed
+
+# Just additive
+fit.bn.t <- glm(binomial ~ Temp + dist_km + Salinity + Habitat, family = binomial, data = sal_env)
+summary(fit.bn.t)
+
+# Lets start dropping parameters and seeing what it does to the model and its deviance etc. 
+# Salinity had no correl
+fit.bn.t2 <- glm(binomial ~ Temp + dist_km + Habitat, family = binomial, data = sal_env)
+summary(fit.bn.t2)
+
+fit.bn.t3 <- glm(binomial ~ Temp + Habitat, family = binomial, data = sal_env)
+summary(fit.bn.t3)
+
+# lets compare AIC values (include model w/ just hab too)
+AIC(fit.bn.intx2, fit.bn.t, fit.bn.t2, fit.bn.t3, fit.bn5) # ust hab appears to the better model, second to that is the model that included temp and habitat. Lets compare the temp hab and julian day hab (that we decided was the better model from above)
 ```
 
