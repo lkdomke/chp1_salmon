@@ -383,6 +383,7 @@ pair.fish <- fish.sub %>%
 
 Okay now that we only have the sites we're for sure interested and we made sure that they were done in the same timeframe (generally within a few days of each other) and that we've paired them by site_pair -- lets do some exploratory analysis of salmon cpue.
 # Exploratory graphs
+## theme settings
 ```{r theme settings}
 # Creates custom base plot theme that can adjust every graph that you use plot_theme for!
 
@@ -581,7 +582,7 @@ g3 + scale_fill_brewer(palette = "Dark2")
 
 Lets use some GLMs to evaluate relationships between salmon catch in habitats
 
-# GLM explorations
+# GLM explorations - total abundance
 ## Visualizations
 
 ```{r data structure}
@@ -594,6 +595,10 @@ sal_env_wide <- pivot_wider(sal_env, names_from = SpCode, values_from = abundanc
 corrgram(sal_env_wide[,c(8,9, 19:23)], lower.panel = panel.shade, 
          upper.panel = panel.cor, diag.panel = panel.density)
 # Looks like theres a couple explanatory parameters that shouldn't be included together since they're already strongly correlated. Temperature and Julian day
+
+sal_env$Salinity[sal_env$Salinity == 0] <- NA
+sal_env$Temp[sal_env$Temp == 0] <- NA
+
 ```
 
 ```{r}
@@ -740,5 +745,752 @@ summary(fit.bn.t3)
 
 # lets compare AIC values (include model w/ just hab too)
 AIC(fit.bn.intx2, fit.bn.t, fit.bn.t2, fit.bn.t3, fit.bn5) # ust hab appears to the better model, second to that is the model that included temp and habitat. Lets compare the temp hab and julian day hab (that we decided was the better model from above)
+
+# comparing the best model from below w/ the best from above
+AIC(fit.bn.t3, fit.bn3) # looks like julian day and Hab is a better way to look at the data still
+plot(fit.bn.t3, 1:6) # still a weird fit, maybe binomial isn't the best. 
+```
+
+Okay so having looked at diff parameters with the binomial logistic model and seeing that dispite figuring out which model is the "better" model, the fit of the model was relatively low. Lets try using a different type of model. 
+First lets look at the poisson model, then depending on if the data are overdispersed (common for count data) -- try using a negative binomial or zero-inflated model (test for too many zeros using a vuong test?) 
+A poisson distribution uses a *constant* term for variance, i.e. the variance cannot change across group etc. Negative binomial distribution allows for variance to essential *vary* within the model. 
+
+## Poisson distribution
+```{r}
+# Lets try looking at the log transformation of the data since poisson distribution uses a "log link"
+
+plot(sal_env$julian, log(sal_env$abundance + 1)) # +1 because you can't take the log of 0
+plot(sal_env$Temp, log(sal_env$abundance + 1))
+plot(sal_env$Salinity, log(sal_env$abundance + 1))
+plot(sal_env$dist_km, log(sal_env$abundance + 1))
+plot(sal_env$Habitat, log(sal_env$abundance + 1))
+
+# Lets look at it using scatter.smooth using the LOESS smooth function
+scatter.smooth(sal_env$julian, log(sal_env$abundance + 1)) # +1 because you can't take the log of 0
+scatter.smooth(sal_env$Temp, log(sal_env$abundance + 1))
+scatter.smooth(sal_env$Salinity, log(sal_env$abundance + 1))
+scatter.smooth(sal_env$dist_km, log(sal_env$abundance + 1))
+scatter.smooth(sal_env$Habitat, log(sal_env$abundance + 1))
+```
+
+Fit the model
+```{r}
+# Create two models: one with temp and the other with julian
+# Start with julian
+fit.pois <- glm(abundance ~ julian + I(julian ^2) + Salinity + dist_km + Habitat, data = sal_env, family = poisson)
+summary(fit.pois) # why are the significance so diff that the binomial above? 
+
+# Can use a pearson goodness of fit test to look at if the poisson distribution model is a good fit for the data
+# Extract the pearson residuals (residuals(type = "pearson")), square them and then take the sum: 
+chisq <- sum(residuals(fit.pois, type="pearson")^2)
+# The chisq value should follow a x2(chisquare) distribution, if the null hypothesis is true (i.e. the data follow a poisson distribution)
+
+pchisq(chisq, df.residual(fit.pois), lower.tail = FALSE)# this is supposed to be a p-value that tells us if we reject the null. With a pvalue of ~ 0 we reject the null hypothesis that this fits the poisson distribution. 
+pchisq(deviance(fit.pois), df.residual(fit.pois), lower.tail = FALSE)  # can do a similar test using the deviance. 
+
+# this may be because of overdispersion (i.e. more variance than accounted for in the model) To check for overdispersion you need to look at the residuals of the model
+
+r <- residuals(fit.pois)
+y.hat <- fitted(fit.pois)
+par(mfrow=c(1,1))
+plot(y.hat,r)
+abline(h=c(-2,0,2),col=c(3,2,3))
+
+deviance(fit.pois)/df.residual(fit.pois) 
+
+#' The overdispersion parameter is larger than one (84.8). Wayy larger, clearly there is overdispersion
+```
+
+## Quasipoisson
+A quasi-likelihood model permits extra variation by multiplying the variance term by an appropriate “adjustment factor”. The fitted values will be identical to those from the Poisson log-linear regression, but the standard errors will be larger, and hence the p-values will be larger as well. In R, a quasi-likelihood model for tbe Poisson can be fit by using family=quasipoisson instead of family=poisson in the call to 'glm()'
+```{r}
+fit.quasi <- update(fit.pois, family = quasipoisson)
+summary(fit.quasi) # overdispersion 138, estimates are the same, but SE seem to be bigger
+summary(fit.pois)
+
+# Does the quasipoisson distribution look right
+par(mfrow=c(2,3))
+plot(fit.quasi, which=1:6)
+# possible influential outlier (case # 19). The pearson residuals vary across the predicted values indicating that they are *not* randomly distributed. Lack of homogeneity in residuals. Curious what would happen to fit if you removed the outlier
+fit.quasi.out <- update(fit.quasi, data = sal_env[-19,])
+summary(fit.quasi.out)
+
+par(mfrow = c(2,3))
+plot(fit.quasi.out, which = 1:6) # maybe looks slightly better but similar issues still remain. 
+```
+
+## Negative binomial 
+Another approach to overdispersion (like we saw above) is using the negative binomial distribution. However, this will not be able to deal with the heterozygosity in the residuals (but I dont think that negative binomial assumes constant variance?)
+
+1. try w/ julian day but also next with temp
+```{r}
+library(MASS)
+# note if you want to use select from dplyr, use dplyr::select
+fit.nb <- glm.nb(abundance ~ julian + I(julian ^2) + Salinity + dist_km + Habitat, data = sal_env)
+summary(fit.nb)
+
+library(lmtest)
+lrtest(fit.pois, fit.nb) # null hypothesis is reject the same model with a neg binomial distribution is considered the "better model"
+
+# lets create iterations of the model with fewer non significant parameters
+# already checked interactions between parameters, eithe rth emodel doesn't converge if all are considereed interactions or are non-significant 
+fit.nb2 <- glm.nb(abundance ~ julian + dist_km + Salinity + Habitat, data = sal_env)
+summary(fit.nb2)
+
+fit.nb3 <- glm.nb(abundance ~ julian + I(julian ^2) + Salinity + Habitat, data = sal_env)
+summary(fit.nb3)
+
+fit.nb4 <- glm.nb(abundance ~ julian + I(julian ^2) + Habitat, data = sal_env)
+summary(fit.nb4)
+
+fit.nb5 <- glm.nb(abundance ~ julian + dist_km + Habitat, data = sal_env)
+summary(fit.nb5)
+
+fit.nb6 <- glm.nb(abundance ~ julian + Salinity + Habitat, data = sal_env)
+summary(fit.nb6)
+
+fit.nb7 <- glm.nb(abundance ~ julian + Habitat, data = sal_env)
+summary(fit.nb7)
+
+# Lets compare models 
+AIC(fit.nb, fit.nb2, fit.nb3, fit.nb4, fit.nb5, fit.nb6, fit.nb7) 
+# at most theres only a change of ~3 of the AIC value, but the models that are better are the fit.nb 6 and fit.nb7 -- lets compare them
+
+anova(fit.nb6, fit.nb7)
+lrtest(fit.nb6, fit.nb7)
+# Does not reject the null (pvalue = 0.1), so the simplier model is the "better model" 
+
+# Lets look at the fit of this model that includes julian day and Habitat
+par(mfrow = c(2,3))
+plot(fit.nb6, which = 1:6) # the qqplot indicates that there may be some right or positive skew of the data. Isn't essential for interpretating the data (I think) but should be noted. The residuals against the predicted values are... better but there are some patterns. 
+```
+
+Lets visualize this model 'fit.nb6' that we've determined is the better model. 
+
+```{r}
+par(mfrow = c(1,1))
+visreg(fit.nb6) # all graphs
+# by each parameter
+
+h <- visreg(fit.nb6, "Habitat", scale = "response", gg = TRUE, partial = TRUE, alpha = .05,
+            line = list(col = "black")) +
+  plot_theme() + 
+  coord_cartesian(ylim = c(0, 700)) +
+  ylab("CPUE")
+
+j <- visreg(fit.nb6, "julian", scale = "response", gg = TRUE, partial = TRUE, alpha = .05,
+            line = list(col = "black")) + 
+  coord_cartesian(ylim = c(0, 700)) +
+  plot_theme() + 
+  ylab("CPUE") +
+  xlab("Julian Day")
+
+s <- visreg(fit.nb6, "Salinity", scale = "response", gg = TRUE, partial = TRUE, alpha = .05, 
+            line = list(col = "black")) + 
+  coord_cartesian(ylim = c(0, 700)) +
+  plot_theme() + 
+  ylab("CPUE")
+  
+
+plot_grid(h, j, s,
+          labels = c("A", "B", "C"),
+          ncol = 2, nrow = 2)
+```
+
+We know that each species of salmon have different life histories, so they might be influenced by different parameters than total salmon abundance. Lets start with our most abundant species--pink salmon
+
+# GLM explorations - pink salmon 
+```{r pink}
+pk <- sal_env %>%
+  filter(SpCode == "SALPINK")
+
+pink <- sal_env %>%
+  dplyr::select(-c(SpCode, abundance, binomial)) %>%
+  distinct() %>%
+  left_join(pk)
+
+pink$abundance[is.na(pink$abundance)] = 0
+pink <- pink %>%
+  mutate(log_abund = log(abundance + 1)) # lets create a column that has a log transformed abundance and refit some of the models with this column to look at how it compares
+
+# but somehow the temperature data that was NA has been mistakeningly changed to 0, change back
+pink$Temp[pink$Temp == 0] <- NA
+pink$Salinity[pink$Salinity == 0] <- NA
+```
+
+## Visualizations
+```{r}
+corrgram(pink[,c(8:10, 19, 20, 23, 25)], lower.panel = panel.shade,
+         upper.panel = panel.cor, diag.panel = panel.density)
+
+# Looks like theres a couple explanatory parameters that shouldn't be included together since they're already strongly correlated. Temperature and Julian day
+# But also loooks like salinity and dist are correlated
+```
+
+```{r}
+p1 <- pink %>%
+  drop_na(SpCode) %>%
+  ggplot(aes(x = dist_km, y = abundance, color = Habitat)) + 
+  geom_point(size = 2) + 
+  plot_theme() +
+  ylab("CPUE") + xlab("Distance from anadromous stream (km)")
+p1 + scale_color_brewer(palette = "Dark2")
+```
+```{r}
+p2 <- pink %>%
+  drop_na(SpCode) %>%
+  ggplot(aes(x = julian, y = abundance, color = Habitat)) + 
+  geom_point(size = 2) + 
+  plot_theme() +
+  ylab("CPUE") + xlab("Julian Day")
+p2 + scale_color_brewer(palette = "Dark2")
+```
+```{r}
+p3 <- pink %>%
+  drop_na(SpCode) %>%
+  ggplot(aes(x = Salinity, y = abundace, color = Habitat)) + 
+  geom_point(size = 2) + 
+  plot_theme() +
+  ylab("CPUE") + xlab("Salinity")
+p3 + scale_color_brewer(palette = "Dark2")
+```
+```{r}
+p4 <- pink %>%
+  drop_na(SpCode) %>%
+  ggplot(aes(x = Temp, y = abundace, color = Habitat)) + 
+  geom_point(size = 2) + 
+  plot_theme() +
+  ylab("CPUE") + xlab("Temperature (C)")
+p4 + scale_color_brewer(palette = "Dark2")
+```
+
+```{r}
+plot_grid(p1, p2, p3, p4,
+          labels = c("A", "B", "C", "D"),
+          ncol = 2, nrow = 2)
+```
+
+Against habitat?
+```{r}
+pink %>%
+  ggplot() +
+  geom_boxplot(aes(x = Habitat, y = abundance)) +
+  plot_theme() +
+  ylab("Pink salmon CPUE")
+
+# out of curiorsiity does this habitat pattern happen across all seines in seak that happened in may and june? 
+
+seak_sal %>%
+  filter(Mon == "May" | Mon == "Jun") %>%
+  ggplot() +
+  geom_boxplot(aes(x = Habitat, y = abundance, color = SpCode)) +
+  plot_theme()
+
+```
+
+## Binomial model
+Wasn't the greatest model for overall total abundance, but worthwhile to go through the steps for pinks as well. 
+
+```{r}
+# set up binomial make sure columns are right. 
+glimpse(pink) 
+# change NAs in binomial column to zeros
+pink$binomial[is.na(pink$binomial)] = 0
+unique(pink$binomial) # check! 
+```
+
+Our question for binomial model:
+For the binomial model, we're hypothesizing that habitat type (specifically the presence of vegetation in eelgrass and kelp habitats) will determine presence of salmon. Whereas unvegetated habitats will not  have fish. 
+
+Based on the corrgram done above, temperature and julian day are correlated (+) and Salinity and distance from anadromous stream (-) at around r = 0.7 might be best to keep those in seperate models. 
+1. Binomial models with julian, dist, habitat
+```{r}
+# check for interactions
+pink.intx <- glm(binomial ~  julian * I(julian ^2) + dist_km * Habitat, data = pink, family = binomial)
+summary(pink.intx) # cant have all intx cause convergence doesn't happen. 
+
+# remove interactions
+pink.b <- glm(binomial ~ julian + I(julian^2) + dist_km + Habitat, data = pink, family = binomial)
+summary(pink.b)
+
+# drop dist_km
+pink.b2 <- glm(binomial ~ julian + I(julian^2) + Habitat, data = pink, family = binomial)
+summary(pink.b2)
+
+# drop julian^2
+pink.b3 <- glm(binomial ~ julian + Habitat, data = pink, family = binomial)
+summary(pink.b3)
+
+# julian
+pink.b4 <- glm(binomial ~ Habitat, data = pink, family = binomial)
+summary(pink.b4) # not the most ideal model cause we know julian is impt
+
+AIC(pink.intx, pink.b, pink.b3, pink.b4)
+```
+
+2. Binomial models with julian, salinity, habitat
+```{r}
+# check for interactions
+pink.intx2 <- glm(binomial ~  Salinity * I(julian ^2) + julian * Habitat, data = pink, family = binomial)
+summary(pink.intx2) # cant have all intx cause convergence doesn't happen. 
+
+# remove interactions
+pink.b5 <- glm(binomial ~ julian + I(julian^2) + Salinity + Habitat, data = pink, family = binomial)
+summary(pink.b5)
+
+# other versions of the model with Salinity are the same as the ones done above.
+AIC(pink.intx2, pink.b5)
+```
+
+3. Binomial models with temp, dist, habitat
+```{r}
+# check for interactions
+pink.intx3 <- glm(binomial ~ dist_km + Temp * Habitat, data = pink, family = binomial)
+summary(pink.intx3)
+
+# only addiative
+pink.b6 <- glm(binomial ~ dist_km + Temp + Habitat, data = pink, family = binomial)
+summary(pink.b6)
+
+# drop dist
+pink.b7 <- glm(binomial ~ Temp + Habitat, data = pink, family = binomial)
+summary(pink.b7)
+
+# drop temp instead
+pink.b8 <- glm(binomial ~ dist_km + Habitat, data = pink, family = binomial)
+summary(pink.b8)
+
+# just for funnsies
+pink.b9 <- glm(binomial ~ Habitat, data = pink, family = binomial)
+summary(pink.b9)
+
+AIC(pink.intx3, pink.b6, pink.b7, pink.b8, pink.b9)
+```
+
+4. Binomial models with temp, salinity, habitat
+
+```{r}
+# full model with interactions
+pink.intx4 <- glm(binomial ~  Salinity + Temp * Habitat, data = pink, family = binomial)
+summary(pink.intx4)
+
+pink.b10 <- glm(binomial ~ Temp + Salinity + Habitat, data = pink, family = binomial)
+summary(pink.b10)
+
+pink.b11 <- glm(binomial ~ Salinity + Habitat, data = pink, family = binomial)
+summary(pink.b11)
+
+AIC(pink.intx4, pink.b10, pink.b11)
+```
+
+Okay which are the best models?
+```{r}
+AIC(pink.b11, pink.b7, pink.b9, pink.b5, pink.b, pink.b4)
+# they are all very similar but the three that are the lowest AIC values are:
+# pink.b, pink.b5, pink.b4
+
+summary(pink.b)
+summary(pink.b5)
+summary(pink.b4) # having just habitat isnt ideal cause we know julian day is impt
+
+AIC(pink.b, pink.b5) # pink.b including julian day and dist and hab is the lowest AIC and likely the "better" model. 
+```
+
+Okay so if the "better" model is 'pink.b', lets look at the fit of the model and visualize the results
+```{r}
+visreg(pink.b, scale = "response")
+# thoughts about julian being more of a categorical variable rather than continuous?
+# how does the model fit?
+par(mfrow = c(2,3))
+plot(pink.b, which = 1:6) # uff not that well.. looks like some patters in the residuals. 
+```
+
+## Poisson distribution
+Visualizing the log distribution
+```{r}
+# Lets try looking at the log transformation of the data since poisson distribution uses a "log link"
+
+plot(pink$julian, log(pink$abundance + 1)) # +1 because you can't take the log of 0
+plot(pink$Temp, log(pink$abundance + 1))
+plot(pink$Salinity, log(pink$abundance + 1))
+plot(pink$dist_km, log(pink$abundance + 1))
+plot(pink$Habitat, log(pink$abundance + 1))
+
+# Lets look at it using scatter.smooth using the LOESS smooth function
+scatter.smooth(pink$julian, log(pink$abundance + 1)) # +1 because you can't take the log of 0
+scatter.smooth(pink$Temp, log(pink$abundance + 1))
+scatter.smooth(pink$Salinity, log(pink$abundance + 1))
+scatter.smooth(pink$dist_km, log(pink$abundance + 1))
+scatter.smooth(pink$Habitat, log(pink$abundance + 1))
+```
+
+
+```{r}
+# Create two models: one with temp and the other with julian
+# Start with julian
+pois.pink <- glm(abundance ~ julian + I(julian ^2) + dist_km + Habitat, data = pink, family = poisson)
+summary(pois.pink) # why are the significance so diff that the binomial above? 
+
+# Can use a pearson goodness of fit test to look at if the poisson distribution model is a good fit for the data
+# Extract the pearson residuals (residuals(type = "pearson")), square them and then take the sum: 
+chisq <- sum(residuals(pois.pink, type="pearson")^2)
+# The chisq value should follow a x2(chisquare) distribution, if the null hypothesis is true (i.e. the data follow a poisson distribution)
+
+pchisq(chisq, df.residual(pois.pink), lower.tail = FALSE)# this is supposed to be a p-value that tells us if we reject the null. With a pvalue of ~ 0 we reject the null hypothesis that this fits the poisson distribution. 
+pchisq(deviance(pois.pink), df.residual(pois.pink), lower.tail = FALSE)  # can do a similar test using the deviance. 
+
+# this may be because of overdispersion (i.e. more variance than accounted for in the model) To check for overdispersion you need to look at the residuals of the model
+
+r <- residuals(pois.pink)
+y.hat <- fitted(pois.pink)
+par(mfrow=c(1,1))
+plot(y.hat,r)
+abline(h=c(-2,0,2),col=c(3,2,3))
+
+deviance(pois.pink)/df.residual(pois.pink) 
+
+#' The overdispersion parameter is larger than one (123.8). Wayy larger, clearly there is overdispersion
+```
+
+
+## Quasipoisson
+```{r}
+quasi.pink <- update(pois.pink, family = quasipoisson)
+summary(quasi.pink) # overdispersion 138, estimates are the same, but SE seem to be bigger
+summary(pois.pink)
+
+# Does the quasipoisson distribution look right
+par(mfrow=c(2,3))
+plot(quasi.pink, which=1:6)
+# possible influential outlier (case # 10). The pearson residuals vary across the predicted values--linear trend-- indicating that they are *not* randomly distributed. Lack of homogeneity in residuals. Curious what would happen to fit if you removed the outlier
+quasi.pink.out <- update(quasi.pink, data = sal_env[-c(10),])
+summary(quasi.pink.out) #nothing really in the summary, might improve sign of eelgrass...
+
+par(mfrow = c(2,3))
+plot(quasi.pink.out, which = 1:6)
+```
+
+## Negative binomial 
+Another approach to overdispersion (like we saw above) is using the negative binomial distribution. However, this will not be able to deal with the heterozygosity in the residuals (but I dont think that negative binomial assumes constant variance?)
+
+1. Neg bi models with julian, dist, habitat
+```{r}
+pink.nb <- glm.nb(abundance ~ julian + I(julian^2) + dist_km + Habitat, data = pink, init.theta=0.5, control = glm.control(maxit = 10000))
+summary(pink.nb)
+
+# drop the julian2 
+pink.nb2 <- glm.nb(abundance ~ julian + dist_km + Habitat, data = pink)
+summary(pink.nb2)
+
+# bring back j2 and drop dist
+pink.nb3 <- glm.nb(abundance ~ julian + I(julian^2) + Habitat, data = pink, init.theta = 0.5, 
+                   control = glm.control(maxit = 1000))
+summary(pink.nb3)
+
+# drop julian2
+pink.nb4 <- glm.nb(abundance ~ julian + Habitat, data = pink)
+summary(pink.nb4)
+
+# drop julian (but we know its impt)
+pink.nb5 <- glm.nb(abundance ~ Habitat, data = pink)
+summary(pink.nb5)
+
+# because these models are nested, can use likelihood ratio test
+lrtest(pink.nb, pink.nb2) # null hypothesis true, dropping jul2 justified
+lrtest(pink.nb, pink.nb3) # null hypothesis true, droopping dist justified
+lrtest(pink.nb, pink.nb4) # null hypothesis true
+lrtest(pink.nb, pink.nb5) # null hypo true, HOWEVER. We know that julian is an impt covariate
+lrtest(pink.nb4, pink.nb5) # pvalue 0.06 -- rejected at 0.1
+AIC(pink.nb4, pink.nb5)
+AICc(pink.nb4);AICc(pink.nb5)
+# pink.nb4 is the better of these 
+```
+
+2. Neg bi models with julian, salinity, habitat
+```{r}
+# repeat with salinity instead of dist
+
+pink.nb6 <- glm.nb(abundance ~ julian + I(julian ^ 2) + Salinity + Habitat, data = pink,
+                   init.theta = 0.5, control = glm.control(maxit = 100))
+summary(pink.nb6)
+
+#drop jul2
+pink.nb7 <- glm.nb(abundance ~ julian + Salinity + Habitat, data = pink) 
+summary(pink.nb7)
+
+lrtest(pink.nb6, pink.nb7) # justified in dropping julian2
+# can't directly compare pink.nb7 and pink.nb4 because they were not fitted with the same number of observations (had to drop 3 seines were no salinity measures were taken)
+
+# lets create a new model with the reduced dataset
+pink.nb4_reduced <- update(pink.nb4, data = pink[-c(5:7),])
+
+lrtest(pink.nb4_reduced, pink.nb7) # null hypothesis true, justified in dropping salinity
+AICc(pink.nb4_reduced); AICc(pink.nb7)
+```
+
+3. Neg bi models with temp, dist, habitat
+```{r}
+pink.nb8 <- glm.nb(abundance ~ Temp + dist_km + Habitat, data = pink)
+summary(pink.nb8)
+
+pink.nb9 <- glm.nb(abundance ~ Temp + Habitat, data = pink)
+summary(pink.nb9)
+
+pink.nb10 <- glm.nb(abundance ~ dist_km + Habitat, data = pink)
+summary(pink.nb10)
+
+# because these are nested models can compare with lrtest
+lrtest(pink.nb8, pink.nb9) # null hypo true, justified in dropping dist
+lrtest(pink.nb8, pink.nb10) # can't compare not the same size dataset, update pink.nb10
+
+pink.nb10_reduced <- update(pink.nb10, data = pink[-c(5:7, 28),], init.theta = 0.5, 
+                           control = glm.control(maxit = 1000))
+
+lrtest(pink.nb8, pink.nb10_reduced) # null hypothesis rejected, keep TEMP
+AICc(pink.nb8); AICc(pink.nb10_reduced); AICc(pink.nb9)
+# best model is pink.nb9
+```
+
+4. Neg bi models with temp, salinity, habitat
+
+```{r}
+pink.nb11 <- glm.nb(abundance ~ Temp + Salinity + Habitat, data = pink, init.theta = 0.5, control = glm.control(maxit = 100))
+summary(pink.nb11)
+
+pink.nb12 <- glm.nb(abundance ~ Salinity + Habitat, data = pink)
+summary(pink.nb12)
+
+pink.nb12_reduced <- update(pink.nb12, data = pink[-c(28),])
+
+lrtest(pink.nb11, pink.nb12_reduced) # null hypothesis rejected, keep TEMP
+lrtest(pink.nb11, pink.nb9) # null hypothesis rejected, keep Salinity
+
+AIC(pink.nb11, pink.nb12_reduced, pink.nb9)
+AICc(pink.nb11); AICc(pink.nb12_reduced); AICc(pink.nb9)
+# The model that includes temperature and salinity is the "better" MODEL (pink.nb11)
+```
+
+Compare the best models
+```{r}
+# pink.nb11 - abund~Temp+Salinity+Habitat
+# pink.nb9 - abund~Temp+Habitat
+# pink.nb4 - abund~julian + Habitat
+AIC(pink.nb11, pink.nb9)
+AICc(pink.nb11); AICc(pink.nb9)
+# to include pink.nb4 have to reduce observations
+pink.nb4_red2 <- update(pink.nb4, data = pink[-c(5:7, 28),])
+AIC(pink.nb11, pink.nb9, pink.nb4_red2)
+
+# best model is that that include Temp and Salinity
+lrtest(pink.nb9, pink.nb11) # they're nested models
+# justified in keep Salinity
+
+
+# for funsies lets look at what the AICc 
+library(AICcmodavg)
+AICc(pink.nb11); AICc(pink.nb9); AICc(pink.nb4_red2)
+```
+
+Lets look at diagnostics foor both the models
+```{r}
+plot(pink.nb4, which = 1:6)
+
+plot(pink.nb11, which = 1:6)
+
+# Case number 15 looks like it may be more influential in the pink.nb11 model so lets drop it and see what happens
+
+pink.nb11.upd <- update(pink.nb11, data = pink[-15,]) # whoa definitely lowers AIC value
+summary(pink.nb11.upd) # lowers as well but not as much
+
+plot(pink.nb11.upd, which = 1:6)
+```
+
+Visualize pink abund models 
+```{r}
+visreg(pink.nb11)
+visreg(pink.nb11.upd)
+visreg(pink.nb4)
+
+```
+### Visualize neg binomial pink salmon models
+Make them look nice and go by model
+1. Pink.nb11
+```{r}
+pink1 <- visreg(pink.nb11, "Temp", scale = "response", gg = TRUE, partial = TRUE, alpha = .05, 
+                line = list(col = "black")) + 
+  plot_theme() +
+  xlab("Temperature (C)") + ylab("Pink CPUE") + 
+  geom_point() + coord_cartesian(ylim = c(0, 450))
+pink1
+
+pink2 <- visreg(pink.nb11, "Habitat", scale = "response", gg = TRUE, partial = TRUE, alpha = 0.5, 
+                line = list(col = "black")) + 
+  plot_theme() + coord_cartesian(ylim = c(0, 450)) +
+  xlab("Habitat") + ylab("Pink CPUE")
+pink2
+
+pink3 <- visreg(pink.nb11, "Salinity", scale = "response", gg = TRUE, partial = TRUE, alpha = 0.5, 
+                line = list(col = "black")) + 
+  geom_point() + coord_cartesian(ylim = c(0, 450)) +
+  plot_theme() + 
+  xlab("Salinity") + ylab("Pink CPUE")
+pink3
+
+```
+
+visualize neg binomial models
+```{r}
+plot_grid(pink1, pink2, pink3,
+          labels = c("A", "B", "C"),
+          ncol = 2, nrow = 2)
+```
+
+lets visualize the model with julian day too
+```{r}
+#pink.nb4
+pink4 <- visreg(pink.nb4, "julian", scale = "response", gg = TRUE, partial = TRUE, alpha = .05, 
+                line = list(col = "black")) + 
+  plot_theme() +
+  xlab("Julian Day") + ylab("Pink CPUE") + 
+  geom_point() + coord_cartesian(ylim = c(0, 400))
+pink4
+
+pink5 <- visreg(pink.nb4, "Habitat", scale = "response", gg = TRUE, partial = TRUE, alpha = 0.5, 
+                line = list(col = "black")) + 
+  plot_theme() + coord_cartesian(ylim = c(0, 400)) +
+  xlab("Habitat") + ylab("Pink CPUE")
+pink5
+
+plot_grid(pink4, pink5, 
+          labels = c("A", "B"), 
+          ncol = 2, nrow = 1)
+```
+
+### log transformed neg binomial pink models
+Continuing to do things for fun, lets look at logtransformations of the 3 best models
+```{r}
+pink.nb9
+pink.nb9.log <- glm(log_abund ~ Temp + Habitat, data = pink)
+summary(pink.nb9.log)
+
+summary(pink.nb11)
+pink.nb11.log <- glm(log_abund ~ Temp + Salinity + Habitat, data = pink)
+summary(pink.nb11.log)
+
+pink.test.log <- glm(log_abund ~ Salinity + Habitat, data = pink[-c(28),])
+summary(pink.test.log)
+
+pink.nb4
+pink.nb4.log <- glm(log_abund ~ julian + Habitat, data = pink)
+summary(pink.nb4.log)
+
+lrtest(pink.nb9.log, pink.nb11.log) # null hypothesis reject, keep Salinity
+AICc(pink.nb9.log); AICc(pink.nb11.log); AICc(pink.nb4.log)
+# With log transformation the first two models appear to both have lowerAIC values than the third. But based on the lrtest we SHOULD keep salinity in the model, should we keep temp?
+lrtest(pink.nb11.log, pink.test.log) # reject null, keep Temp
+# bestmodel (pink.nb11.log)
+
+# visualize briefly
+par(mfrow=c(1,3))
+visreg(pink.nb11.log)
+# fit of model?
+par(mfrow=c(2,3))
+plot(pink.nb11.log, which = 1:6) # looks like 13 is maybe an influential outlier, for funsies lets drop it
+p11.out <- update(pink.nb11.log, data = pink[-13,])
+summary(p11.out)
+par(mfrow = c(2,3))
+plot(p11.out, which = 1:6)
+
+# lets do more diagnositics
+par(mfrow = c(2,3))
+d1 <- plot(pink[-c(5:7, 28),]$Temp, resid(pink.nb11))
+d3 <- plot(pink[-c(5:7, 28),]$Salinity, resid(pink.nb11))
+d5 <- plot(pink[-c(5:7, 28),]$Habitat, resid(pink.nb11))
+
+d2 <- plot(pink[-c(5:7, 28),]$Temp, resid(pink.nb11.log))
+d4 <- plot(pink[-c(5:7, 28),]$Salinity, resid(pink.nb11.log))
+d6 <- plot(pink[-c(5:7, 28),]$Habitat, resid(pink.nb11.log))
+
+
+# visualize more in depth
+pink7 <- visreg(pink.nb11, "Temp", scale = "response", gg = TRUE, partial = TRUE, alpha = .05, 
+                line = list(col = "black")) + 
+  plot_theme() +
+  xlab("Temperature (C)") + ylab("Pink CPUE") + 
+  geom_point() + coord_cartesian(ylim = c(0, 450))
+pink7
+
+pink8 <- visreg(pink.nb11, "Habitat", scale = "response", gg = TRUE, partial = TRUE, alpha = 0.5, 
+                line = list(col = "black")) + 
+  plot_theme() + coord_cartesian(ylim = c(0, 450)) +
+  xlab("Habitat") + ylab("Pink CPUE")
+pink8
+
+pink9 <- visreg(pink.nb11, "Salinity", scale = "response", gg = TRUE, partial = TRUE, alpha = 0.5, 
+                line = list(col = "black")) + 
+  geom_point() + coord_cartesian(ylim = c(0, 450)) +
+  plot_theme() + 
+  xlab("Salinity") + ylab("Pink CPUE")
+pink9
+
+```
+
+visualize neg binomial models
+```{r}
+plot_grid(pink7, pink8, pink9,
+          labels = ("Originally log-transformed"),
+          ncol = 2, nrow = 2)
+```
+
+Okay so I noticed that there is some confounding between julian day and location (and likely some with temp too because julian day and temp are correlated (r ~ .7))
+Lets try adding in a smoothed parameter with lat and long to account for location in our models using a gam
+
+# GAM exploration - pink salmon
+GAM models allows for different error distributions (so family distributions) and link functions. 
+incorporates smoothed nonlinear relationships
+## negative binomial 
+
+```{r pink gam}
+library(mgcv)
+library(maps)
+library(mapdata)
+p.gam <- gam(abundance ~ s(Longitude, Latitude, bs = "ts", k = 4) + Temp + Salinity + Habitat, data = pink, family = nb(link = "log"))
+
+summary(p.gam)
+par(mfrow=c(1,1))
+plot(p.gam)
+visreg(p.gam)
+
+vis.gam(p.gam, c("Longitude", "Latitude"), plot.type =
+"contour", color="topo") # does this even mamke sense? 
+
+map('worldHires',fill=T,xlim=c(-140,-130),
+ylim=c(54,56),add=T)
+
+# this is supposed to be predicted cpue of pink salmon based on the data. But like further north (where there are no seines) is where its indicating there is an increase in salmon. Clearly the scales are off here. 
+
+p.gam2 <- gam(abundance ~ s(Longitude, Latitude, bs = "ts", k =4) + Temp + Habitat, data = pink, family = nb(link = "log"))
+
+summary(p.gam2)
+par(mfrow = c(1,1))
+plot(p.gam)
+
+vis.gam(p.gam2, c("Longitude", "Latitude"), plot.type =
+"contour", color="topo") # still doesn't make sense....
+
+map('worldHires',fill=T,xlim=c(-140,-130),
+ylim=c(54,56),add=T)
+
+anova(p.gam, p.gam2, test = "Chisq") # null hypothesis rejected, meaning that should keep Salinity in model 
+
+p.gam3 <- gam(abundance ~ s(Longitude, Latitude, bs = "ts", k =4) + Salinity + Habitat, data = pink[-28,], family = nb(link = "log"))
+summary(p.gam3) # strange changes to significance
+
+anova(p.gam2, p.gam3, test = "Chisq") # null hypothesis, keep Salinity
+
+p.gam4 <- gam(abundance ~ Salinity + Temp + Habitat, data = pink, family = nb(link = "log"))
+summary(p.gam4)
+
+anova(p.gam2, p.gam4, test = "Chisq") # null hypothesis accept, drop lat/long
 ```
 
