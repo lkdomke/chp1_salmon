@@ -489,6 +489,29 @@ g <- sal_env %>%
 g
 ```
 
+## table sites by # seines and date of seine
+Want to create a table that includes site pair, habitat type, number seines, and date of seine
+```{r}
+# read about using knitr::kable and kableExtra package to create a table. lets load it
+library(kableExtra)
+library(webshot)
+webshot::install_phantomjs()
+
+site_table <- sal_env %>%
+  dplyr::group_by(site_pair, Habitat, Date) %>%
+  dplyr::select(-c(NEAR_DIST, SpCode, abundance, Temp, Salinity, Habitat, 
+                   Gear, julian, dist_km, 
+                   SubLocale)) %>%
+  distinct() %>%
+  dplyr::summarise(Seine_no = n()) %>%
+  ungroup() %>%
+  kbl(col.names = c("Site Location", "Habitat", "Date", "Number of Seines")) %>%
+  kable_classic
+site_table
+
+#save_kable(site_table, "Data/Chp1Hyp2Table.jpeg")
+```
+
 Theres clearly a lot of variability in salmon catches, but at first glance at the graphs make it look like there isn't a large diff in the number of salmon caught in each hab, maybe with more salmon caught in the unvegetated habitat. 
 ## Assesing distribution/normality
 We've done some basic visualizations above, but lets also look at normality, outliers, collinearity, etc. As well as looking into transformations. 
@@ -518,11 +541,11 @@ qqnorm(x) # plot sample points
 qqline(x) # plot normality line -- doesn't look normal not along line
 
 # appoximate log-normal distribution
-qqnorm(log(x)) # fits a lot better than no transformation, still not perf
-qqline(log(x)) # some skew along the tails
+qqnorm(log(x +1)) # fits a lot better than no transformation, still not perf
+qqline(log(x +1)) # some skew along the tails
 
 hist(x) # same as above. heavy right skew
-hist(log(x)) # better but maybe still right skewed
+hist(log(x +1)) # better but maybe still right skewed
 
 # 4th root 
 qqnorm((x^(1/4))) # log looks way better
@@ -1454,13 +1477,23 @@ incorporates smoothed nonlinear relationships
 library(mgcv)
 library(maps)
 library(mapdata)
-p.gam <- gam(abundance ~ s(Longitude, Latitude, bs = "ts", k = 4) + Temp + Salinity + Habitat, data = pink, family = nb(link = "log"))
+p.gam <- gam(log_abund ~ s(Longitude, Latitude, bs = "ts", k = 4) + Temp + Salinity + Habitat, data = pink, family = nb(link = "log"))
 
 summary(p.gam)
-par(mfrow=c(1,1))
-plot(p.gam)
-visreg(p.gam)
 
+# lets do some diagnostic visualization
+par(mfrow=c(2,3))
+plot(pink[-c(5:7, 28),]$Temp, resid(p.gam))
+abline(h =c(0, 1, -1), lty =c(1, 2, 2))
+plot(pink[-c(5:7, 28),]$Salinity, resid(p.gam))
+abline(h =c(0, 1, -1), lty =c(1, 2, 2))
+plot(pink[-c(5:7, 28),]$Habitat, resid(p.gam))
+plot(pink[-c(5:7, 28),]$Latitude, resid(p.gam))
+abline(h =c(0, 1, -1), lty =c(1, 2, 2))
+plot(pink[-c(5:7, 28),]$Longitude, resid(p.gam))
+abline(h =c(0, 1, -1), lty =c(1, 2, 2))
+
+par(mfrow =c(1,1))
 vis.gam(p.gam, c("Longitude", "Latitude"), plot.type =
 "contour", color="topo") # does this even mamke sense? 
 
@@ -1469,7 +1502,7 @@ ylim=c(54,56),add=T)
 
 # this is supposed to be predicted cpue of pink salmon based on the data. But like further north (where there are no seines) is where its indicating there is an increase in salmon. Clearly the scales are off here. 
 
-p.gam2 <- gam(abundance ~ s(Longitude, Latitude, bs = "ts", k =4) + Temp + Habitat, data = pink, family = nb(link = "log"))
+p.gam2 <- gam(log_abund ~ s(Longitude, Latitude, bs = "ts", k =4) + Temp + Habitat, data = pink, family = nb(link = "log"))
 
 summary(p.gam2)
 par(mfrow = c(1,1))
@@ -1481,16 +1514,379 @@ vis.gam(p.gam2, c("Longitude", "Latitude"), plot.type =
 map('worldHires',fill=T,xlim=c(-140,-130),
 ylim=c(54,56),add=T)
 
-anova(p.gam, p.gam2, test = "Chisq") # null hypothesis rejected, meaning that should keep Salinity in model 
+anova(p.gam, p.gam2, test = "Chisq") # null hypothesis rejected at 0.1.... 
 
-p.gam3 <- gam(abundance ~ s(Longitude, Latitude, bs = "ts", k =4) + Salinity + Habitat, data = pink[-28,], family = nb(link = "log"))
+p.gam3 <- gam(log_abund ~ s(Longitude, Latitude, bs = "ts", k =4) + Salinity + Habitat, data = pink[-28,], family = nb(link = "log"))
 summary(p.gam3) # strange changes to significance
 
-anova(p.gam2, p.gam3, test = "Chisq") # null hypothesis, keep Salinity
+anova(p.gam, p.gam3, test = "Chisq") # null hypothesis, keep temp
 
-p.gam4 <- gam(abundance ~ Salinity + Temp + Habitat, data = pink, family = nb(link = "log"))
+p.gam4 <- gam(log_abund ~ Salinity + Temp + Habitat, data = pink, family = nb(link = "log"))
 summary(p.gam4)
 
-anova(p.gam2, p.gam4, test = "Chisq") # null hypothesis accept, drop lat/long
+anova(p.gam, p.gam4, test = "Chisq") # null hypothesis rejected at 0.1
+# if we stay with alpha at 0.5 than the ideal gam model includes dropping both salinity and lat/long
+```
+
+# GLM explorations - chum salmon
+
+```{r chum}
+ch <- sal_env %>%
+  filter(SpCode == "SALCHUM")
+
+chum <- sal_env %>%
+  dplyr::select(-c(SpCode, abundance, binomial)) %>%
+  distinct() %>%
+  left_join(ch)
+
+chum$abundance[is.na(chum$abundance)] = 0
+chum$binomial[is.na(chum$binomial)] = 0
+chum <- chum %>%
+  mutate(log_abund = log(abundance + 1)) # lets create a column that has a log transformed abundance and refit some of the models with this column to look at how it compares
+
+# but somehow the temperature data that was NA has been mistakeningly changed to 0, change back
+chum$Temp[chum$Temp == 0] <- NA
+chum$Salinity[chum$Salinity == 0] <- NA
+```
+
+##Visualizations
+```{r}
+corrgram(chum[,c(8:10, 19, 20, 23, 25)], lower.panel = panel.shade,
+         upper.panel = panel.cor, diag.panel = panel.density)
+
+# similar patterns as above (again) -- shouldn't include julian and temp in the same model
+```
+
+Visualize the diff parameters against abundance
+```{r}
+ch1 <- chum %>%
+  drop_na(SpCode) %>%
+  ggplot(aes(x = dist_km, y = abundance, color = Habitat)) + 
+  geom_point(size = 2) + 
+  plot_theme() +
+  ylab("Chumm salmon CPUE") + xlab("Distance from anadromous stream (km)")
+ch1 + scale_color_brewer(palette = "Dark2")
+
+ch2 <- chum %>%
+  drop_na(SpCode) %>%
+  ggplot(aes(x = julian, y = abundance, color = Habitat)) + 
+  geom_point(size = 2) + 
+  plot_theme() +
+  ylab("Chum salmon CPUE") + xlab("Julian Day")
+ch2 + scale_color_brewer(palette = "Dark2")
+
+ch3 <- chum %>%
+  drop_na(SpCode) %>%
+  ggplot(aes(x = Temp, y = abundance, color = Habitat)) + 
+  geom_point(size = 2) + 
+  plot_theme() +
+  ylab("Chum salmon CPUE") + xlab("Temperature")
+ch3 + scale_color_brewer(palette = "Dark2")
+
+ch4 <- chum %>%
+  drop_na(SpCode) %>%
+  ggplot(aes(x = Salinity, y = abundance, color = Habitat)) + 
+  geom_point(size = 2) + 
+  plot_theme() +
+  ylab("Chum salmon CPUE") + xlab("Salinity")
+ch4 + scale_color_brewer(palette = "Dark2")
+
+ch5 <- chum %>%
+  drop_na(SpCode) %>%
+  ggplot(aes(x = Habitat, y = abundance)) + 
+  geom_boxplot() + 
+  plot_theme() +
+  ylab("Chum salmon CPUE") + xlab("Habitat")
+ch5
+```
+
+Plot together
+```{r}
+plot_grid(ch1, ch2, ch3, ch4,
+          labels = c("A", "B", "C", "D"),
+          ncol = 2, nrow = 2)
+```
+
+## Normality?
+```{r}
+hist(chum$abundance)
+hist(chum$log_abund)
+
+hist(sal_env$abundance)
+hist(log(sal_env$abundance)) # this isn't the correct way of doing this because log(0) is -inf and that get drops off when you plot it, to look at log(abund) need + constant
+hist(log(sal_env$abundance +1))
+
+hist(((chum$abundance)^(1/4))) # doesn't fix the problem of skew
+
+# QQ plots
+qqnorm(chum$abundance)
+qqline(chum$abundance) # concave shape, tons of spread and trailing of tails
+
+qqnorm(chum$log_abund)
+qqline(chum$log_abund) # what is happening at the low sample quartiles?
+
+qqnorm((chum$abundance) ^ (1/4))
+qqline((chum$abundance) ^ (1/4)) # same issue. Is the sample size too small?
+```
+
+Log transformation may be our best bet when it comes to the chum salmon abundances, but it is still somewhat funcky and has some spread on the lower tail. 
+
+## Binomial model
+Lets first look at a presence/absence model using the chum data
+
+Our question for binomial model:
+For the binomial model, we're hypothesizing that habitat type (specifically the presence of vegetation in eelgrass and kelp habitats) will determine presence of chum salmon. Whereas unvegetated habitats will not  have fish. 
+
+Based on the corrgram done above, temperature and julian day are correlated (+), might be best to keep those in seperate models. 
+
+1. julian day + dist + salinity + habitat
+Unlike the other models, salinity and dist aren't correlated
+```{r}
+ch.1 <- glm(binomial ~ julian + I(julian^2) + Salinity + dist_km + Habitat, 
+            data = chum, family = binomial)
+summary(ch.1)
+
+ch.2 <- glm(binomial ~ julian + Salinity + dist_km + Habitat, data = chum, family = binomial)
+summary(ch.2)
+
+anova(ch.1, ch.2, test = "Chisq") # null hypothesis accept, drop julian2
+
+ch.3 <- glm(binomial ~ julian + Salinity + Habitat, data = chum, family = binomial)
+summary(ch.3)
+
+anova(ch.2, ch.3, test = "Chisq") # null accepted drop dist
+
+ch.4 <- glm(binomial ~ julian + Habitat, data = chum, family = binomial)
+summary(ch.4)
+
+ch.4.up <- glm(binomial ~ julian + Habitat, data = chum[-c(5:7),], family = binomial)
+summary(ch.4.up)
+
+anova(ch.3, ch.4.up, test = "Chisq") #null accepted drop salinity
+
+ch.5 <- glm(binomial ~ Habitat, data = chum, family = binomial)
+summary(ch.5)
+
+anova(ch.4, ch.5, test = "Chisq") # null accept drop julian?
+
+AICc(ch.1);AICc(ch.2);AICc(ch.3);AICc(ch.4);AICc(ch.5)
+
+# based on AIC values the third model (ch.3) with julian salinity and habitat (more than 3 diff in values from nearest [chi.5])
+```
+
+2. Binomial models: Temp + salinity + dist + habitat
+```{r}
+ch.6 <- glm(binomial ~ Temp + Salinity + dist_km + Habitat, data = chum, 
+            family = binomial)
+summary(ch.6)
+
+ch.7 <- glm(binomial ~ Temp + Salinity + Habitat, data = chum, family = binomial)
+summary(ch.7)
+
+anova(ch.6, ch.7, test = "Chisq") # null accepted, drop dist
+
+ch.8 <- glm(binomial ~ Temp + Habitat, data = chum, family = binomial)
+summary(ch.8)
+
+anova(ch.7, ch.8, test = "Chisq") # keep salinity
+
+ch.9 <- glm(binomial ~ Habitat + Salinity, data = chum, family = binomial)
+summary(ch.9)
+
+ch.9.up <- glm(binomial ~ Habitat + Salinity, data = chum[-28,], family = binomial)
+
+
+anova(ch.7, ch.9.up, test = "Chisq") ## null accepted, drop Temp
+
+ch.10 <- glm(binomial ~ Habitat, data = chum, family = binomial)
+summary(ch.10)
+
+ch.10.up <- glm(binomial ~ Habitat, data = chum[-c(5:7, 28),], family = binomial)
+
+anova(ch.9, ch.10.up, test = "Chisq") # null accepted?
+
+# when temperature is included in the model, wnat to include salinity, but when its dropped salinity should be dropped?
+
+AICc(ch.10); AICc(ch.7);AICc(ch.9);AICc(ch.8)
+ # best model to go on is just with habitat? but the one that included salinity is also close. 
+# model ch.7, ch.9
+```
+
+Compare nonnested models
+```{r}
+AICc(ch.3);AICc(ch.7);AICc(ch.9)
+# best models are ch.7 and ch.9 -- lets look at fit
+par(mfrow = c(2,3))
+plot(ch.9, which = 1:6)
+```
+
+Back transform models
+```{r}
+par(mfrow=c(1,2))
+visreg(ch.9, scale = "response")
+```
+
+## Negative binomial
+Still don't want to include temperature and julian day in the same model. 
+
+1. Julian day + julian 2 + salinity + dist + Habitat
+```{r}
+
+ch.nb <- glm.nb(log_abund ~ julian + I(julian^2) + Salinity + dist_km + Habitat,
+             data = chum)
+summary(ch.nb)
+
+ch.nb2 <- glm.nb(log_abund ~ julian + Salinity + dist_km + Habitat,
+             data = chum)
+summary(ch.nb2)
+
+lrtest(ch.nb, ch.nb2) # null not rejected, drop julain2
+
+ch.nb3 <- glm.nb(log_abund ~ julian + Salinity + Habitat, data = chum)
+summary(ch.nb3)
+
+lrtest(ch.nb2, ch.nb3) # null not rejected, drop dist
+
+ch.nb4 <- glm.nb(log_abund ~ julian + Habitat, data = chum)
+summary(ch.nb4)
+ch.nb4.up <- glm.nb(log_abund ~ julian + Habitat, data = chum[-c(5:7),])
+
+lrtest(ch.nb3, ch.nb4.up) # drop salinity
+
+ch.nb5 <- glm.nb(log_abund ~ Habitat, data = chum)
+summary(ch.nb5)
+
+lrtest(ch.nb4, ch.nb5) # drop julian hmmmm sorta need to keep it
+
+AICc(ch.nb4); AICc(ch.nb5); AICc(ch.nb3);AICc(ch.nb2); AICc(ch.nb)
+# looks liek for this set of nested models ch.nb5 and ch.nb3 are best
+```
+
+2. Temp + salinity + dist + Habitat
+```{r}
+ch.nb6 <- glm.nb(log_abund ~ Temp + Salinity + dist_km + Habitat, data = chum)
+summary(ch.nb6)
+
+ch.nb7 <- glm.nb(log_abund ~ Temp + Salinity + Habitat, data = chum)
+summary(ch.nb7)
+
+lrtest(ch.nb6, ch.nb7) # drop dist
+
+ch.nb8 <- glm.nb(log_abund ~ Temp + Habitat, data = chum)
+summary(ch.nb8)
+
+lrtest(ch.nb7, ch.nb8) # almost sign consider keeping salinity?
+
+ch.nb9 <- glm.nb(log_abund ~ Salinity + Habitat, data = chum)
+summary(ch.nb9)
+
+ch.nb9.up <- glm.nb(log_abund ~ Salinity + Habitat, data = chum[-28,])
+
+lrtest(ch.nb7, ch.nb9.up) # drop temp
+
+ch.nb10 <- glm.nb(log_abund ~ Habitat, data = chum)
+summary(ch.nb10)
+ch.nb10.up <- glm.nb(log_abund ~ Habitat, data = chum[-c(5:7),])
+
+lrtest(ch.nb9, ch.nb10.up) # drop salinity? 
+
+# Not really a clear what parameters to keep lets look at AIC
+AICc(ch.nb7); AICc(ch.nb8); AICc(ch.nb9); AICc(ch.nb10);AICc(ch.nb6)
+
+# looks like ch.nb8 and ch.nb9 are the best models here
+```
+
+Compare
+```{r}
+AICc(ch.nb8); AICc(ch.nb9);AICc(ch.nb5); AICc(ch.nb3)
+# best are ch.nb8 and ch.nb9, lets look at diagnostics
+
+par(mfrow=c(2,3))
+plot(ch.nb8, which = 1:6)
+
+par(mfrow=c(2,3))
+plot(ch.nb9, which = 1:6)
+
+summary(ch.nb8)
+summary(ch.nb9)
+```
+
+More diagnositc plots
+```{r}
+par(mfrow = c(2,2))
+d1 <- plot(chum[-c(5:7, 28),]$Temp, resid(ch.nb8))
+abline(h =c(0, 1, -1), lty =c(1, 2, 2))
+d5 <- plot(chum[-c(5:7, 28),]$Habitat, resid(ch.nb8))
+
+
+d4 <- plot(chum[-c(5:7),]$Salinity, resid(ch.nb9))
+abline(h =c(0, 1, -1), lty =c(1, 2, 2))
+d6 <- plot(chum[-c(5:7),]$Habitat, resid(ch.nb9))
+
+```
+
+Comparing log/w/olog
+```{r}
+ch.nb11 <- glm.nb(abundance ~ Temp + Habitat, data = chum)
+ch.nb12 <- glm.nb(abundance ~ Salinity + Habitat, data = chum)
+
+par(mfrow = c(2,2))
+d1 <- plot(chum[-c(5:7, 28),]$Temp, resid(ch.nb8))
+d5 <- plot(chum[-c(5:7, 28),]$Habitat, resid(ch.nb8))
+
+d2 <- plot(chum[-c(5:7, 28),]$Temp, resid(ch.nb11))
+d6 <- plot(chum[-c(5:7, 28),]$Habitat, resid(ch.nb11))
+
+par(mfrow = c(2,2))
+d3 <- plot(chum[-c(5:7),]$Salinity, resid(ch.nb9))
+d5 <- plot(chum[-c(5:7),]$Habitat, resid(ch.nb9))
+
+d4 <- plot(chum[-c(5:7),]$Salinity, resid(ch.nb12))
+d6 <- plot(chum[-c(5:7),]$Habitat, resid(ch.nb12))
+
+# from visual inspection the models using log_abund look better in the residauls and fit. 
+```
+
+### back transforming ch.nb8 and ch.nb9
+ch.nb8 first
+```{r}
+chum1 <- visreg(ch.nb8, "Temp", scale = "response", gg = TRUE, partial = TRUE, 
+                alpha = .05, line = list(col = "black")) + 
+  plot_theme() +
+  xlab("Temperature (C)") + ylab("Chum salmon CPUE") + 
+  geom_point() + coord_cartesian(ylim = c(0, 10))
+chum1
+
+chum2 <- visreg(ch.nb8, "Habitat", scale = "response", gg = TRUE, 
+                partial = TRUE, alpha = 0.5, line = list(col = "black")) + 
+  plot_theme() + coord_cartesian(ylim = c(0, 10)) +
+  xlab("Habitat") + ylab("Chum salmon CPUE")
+chum2
+
+```
+
+ch.nb9 second
+```{r}
+chum3 <- visreg(ch.nb9, "Salinity", scale = "response", gg = TRUE, partial = TRUE, 
+                alpha = .05, line = list(col = "black")) + 
+  plot_theme() +
+  xlab("Salinity") + ylab("Chum salmon CPUE") + 
+  geom_point() + coord_cartesian(ylim = c(0, 10))
+chum3
+
+chum4 <- visreg(ch.nb9, "Habitat", scale = "response", gg = TRUE, 
+                partial = TRUE, alpha = 0.5, line = list(col = "black")) + 
+  plot_theme() + coord_cartesian(ylim = c(0, 10)) +
+  xlab("Habitat") + ylab("Chum salmon CPUE")
+chum4
+
+visreg(ch.nb3, "julian", scale = "response")
+```
+
+plot together
+```{r}
+plot_grid(chum1, chum2, chum3, chum4,
+          labels= c("ch.nb8", "", "ch.nb9", ""),
+          nrow = 2, ncol = 2)
 ```
 
