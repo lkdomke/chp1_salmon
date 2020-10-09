@@ -279,8 +279,7 @@ fish.counts <- left_join(fish.count, env) %>%
   left_join(loc)
 
 # long --> wide
-# This includes ALL species (not just salmon). We'll leave this for now because it matches the
-# environmental dataframe. But eventually we'll have to remove the non-salmon species. BUT we want
+# BUT we want
 # retain the 0 where a seine was done but no salmon were caught. 
 df_wide <- pivot_wider(fish.counts, id_cols = c(SiteID, EventID, Locale, SubLocale, Date, Year, Latitude, Longitude, Habitat), names_from = SpCode, values_from = abundance) %>%
   dplyr::select(-"NA") %>%
@@ -419,6 +418,8 @@ sal_env <- subset(anad_dist, SiteID %in% SiteID_comp) %>%
   mutate(julian = yday(date)) %>%
   mutate(dist_km = NEAR_DIST/100)
 
+# write out csv in case we have other interest for this dataset
+# write.csv(sal_env, "Data/NOAA_SSEAK_salmon.csv")
 # looks like theres a couple sites where we don't have environmental information. 
 # No temperature or salinity for: Ballena Island and South Wadleigh (plus no dist info)
 ```
