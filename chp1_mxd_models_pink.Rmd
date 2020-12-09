@@ -1,5 +1,5 @@
 ---
-title: "ch1_mixed_models"
+title: "Chapter 1: Using mixed models to look at pink salmon variation"
 author: "Lia Domke"
 date: "10/8/2020"
 output: html_document
@@ -29,32 +29,38 @@ Important decision making points when fitting a mixed model. Determine which fac
 
 Based on advise from Franz's course--when fitting mixed effect models and obtaining parameter estimations there are two main methods, Maximum Likelihood (ML) and Restricted Maximum Likelihood (REML). You **cannot** use REML to compare models with different fixed effects structure, rather ML is the best use for comparison of different models. After a "best" model is determiend, parameter estimation/CI using REML should be used. 
 
-Model set up:
+## Model set up:
 We selected 6 sites, with three habitat types that were each sampled once for salmon CPUE.
 
 Questions:
+
 1. What is the abundance of salmon in a typical habitat type
+
 2. What is the variation of salmon among habitats (among group variance)
+
 3. What is the variation of salmon within sites (within group variance)
 
 yij = beta + bi + Eij
 
 beta - mean abundance across habitats
+
 bi - random variable representing the deviation from the population mean
+
 bi ~ N(0, sigma-b^2)
+
 Eij - random variable representing the deviation from observation j from the mean density for site 
 
 ## Assumptions
-residuals are assumed to be independent, normally distributed random variables with **constant variance**
++ residuals are assumed to be independent, normally distributed random variables with **constant variance**
 
-random effects are assumed to be **independent** and normally distributed
++ random effects are assumed to be **independent** and normally distributed
 
 ## Model packages options
-nlme, functions : lme, nlme    -- can accommodate residual correlations
++ nlme, functions : lme, nlme    -- can accommodate residual correlations
 
-lme4 - more stable algorithms, can fit generalized mixed effects models but does not accommodate residual correlation, functions: lmer, nlmer, glmer
++ lme4 - more stable algorithms, can fit generalized mixed effects models but does not accommodate residual correlation, functions: lmer, nlmer, glmer
 
-glmm - gmm using monte carlo likelihood estimation
++ glmm - gmm using monte carlo likelihood estimation
 
 ```{r library, message=FALSE, warning=FALSE, include=FALSE}
 library(nlme)
@@ -121,7 +127,7 @@ p1 + facet_wrap(~site_pair) +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
 ```
 
-In `r fig$ref("by.site")` you can see that there are variable numbers of pink salmon caught at each site. Clearly the graph is dominated by the catch of almost 800 pink salmon at Moira Sound. In order to get a better idea, I'll free up the y scale. 
+In figure `r fig$ref("by.site")` you can see that there are variable numbers of pink salmon caught at each site. Clearly the graph is dominated by the catch of almost 800 pink salmon at Moira Sound. In order to get a better idea, I'll free up the y scale. 
 
 ```{r by.site.free, echo = FALSE, fig.width=7, fig.height=6, fig.cap=fig$cap("by.site.free", "Pink salmon abundance per seine in different habitats at nine different sites with free y axis scale")}
 p2 <- ggplot(pink, aes(x = Habitat, y = abundance)) + 
@@ -131,7 +137,7 @@ p2 + facet_wrap(~site_pair, scales = "free_y") +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
 ```
 
-`r fig$ref("by.site.free")` shows that if you look at relative abundances at each site between habitat types, at 4 of the 9 sites more salmon were caught in bedrock over the other three habitats. Kelp and eelgrass had some salmon catch at different sites. However, clearly both sites and habitat are important is determining highly variable salmon abundances. 
+Figure `r fig$ref("by.site.free")` shows that if you look at relative abundances at each site between habitat types, at 4 of the 9 sites more salmon were caught in bedrock over the other three habitats. Kelp and eelgrass had some salmon catch at different sites. However, clearly both sites and habitat are important is determining highly variable salmon abundances. 
 
 Want to use mixed models to account for site when looking at the influence of habitat type. 
 
@@ -161,7 +167,9 @@ boxplot(abundance ~ site_pair, data = pink.sub)
 boxplot(abundance ~ Habitat, data = pink.sub) # in pink sub no sand/gravel sites
 ```
 
-Lets look at some different ways to write mixed models. 
+## LMER
+Lets look at some different ways to write mixed models.
+
 ```{r}
 mxd <- lmer(abundance ~ Habitat + (1 | site_pair), data = pink.sub)
 # model doesn't fit well. because the fitted model is near singularity, however, I'm not sure what that means. 
@@ -169,6 +177,7 @@ mxd <- lmer(abundance ~ Habitat + (1 | site_pair), data = pink.sub)
 summary(mxd)
 ```
 
+## lmLIST
 ```{r}
 # lets try a diff package - lmList
 # This fits the same fixed effect model **seperately** for each group (site?)
@@ -184,6 +193,7 @@ qqnorm(a); qqline(a) # some spread, is this dataset too small to do this kind of
 plot(lmList_mxd) # residuals? 
 ```
 
+## NLME::LME
 Based on Franz's lectures from FISH 604, I've also tried using `nlme::lme`
 ```{r}
 # First I'm going to fit the model using habitat as the fixed effect and site as the random. Because I'm only interested in this model and won't be doing model comparisons with different models, I'm going to fit the model using REML rather than ML. 
@@ -253,7 +263,7 @@ tv2 <- lsmeans(mxd_v.unv, pairwise~Hab_type, adjust = "tukey")
 tv2
 ```
 
-Oh duh. Its the same I think. 
+Oh duh. Its the same I think. Cause theres only two levels of the main effects factor 1
 ```{r}
 plot(tv2)
 ```
