@@ -228,11 +228,11 @@ quadrat that was done in summer 2019. Use the quadrat_ID to connect to the other
 For this purpose we are interested in only the length data but need to use the quadrat sheet to make sure we only are looking at the eelgrass sites
 newest version of data is : RAW_10-22-19
 ```{r}
-hab_qrt <- read_excel("../APECS Master repository/APECS Master repo/ALL_DATA/Lia_fish/Habitat_2019_RAW_10-23-19.xlsx", sheet = 1)
+hab_qrt <- read_excel(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3A33a4f3b6-ad30-494d-a0bf-861fe86d729e"))
 
-hab_lng <- read_excel("../APECS Master repository/APECS Master repo/ALL_DATA/Lia_fish/Habitat_2019_RAW_10-23-19.xlsx", sheet = 2)
+hab_lng <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3Af7c43f66-6800-49b0-9b3d-43e8e39abcd0"), stringsAsFactors=FALSE, header=TRUE)
 
-hab_wgt <- read_excel("../APECS Master repository/APECS Master repo/ALL_DATA/Lia_fish/Habitat_2019_RAW_10-23-19.xlsx", sheet = 3)
+hab_wgt <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3A3b4ab5b8-c023-486f-8a89-7464b9bccf7a"))
 ```
 
 
