@@ -39,7 +39,6 @@ eel17 <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3A
 env17 <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3A5e946e41-4f5f-4499-9969-766f01113971", method = "libcurl"), stringsAsFactors = FALSE, header = TRUE)
 
 name <- read.csv("Data/site_code_names.csv", stringsAsFactors = FALSE, header = TRUE) # updated location 9/20
-
 ```
 # Data Clean up
 ## Main data frame
@@ -58,7 +57,7 @@ dat1 <- dat %>%
 
 ```
 
-## Distance
+## Distance from anad stream
 allsites needs to be combined with environmental information about the sites
 ```{r}
 str(allsites)
@@ -159,9 +158,15 @@ df3 <- df2 %>%
 biom_all <- rbind(df3, biom_site)
 biom_all$year <- as.factor(biom_all$year)
 
-
 dat4 <- left_join(dat3, biom_all, by = c("site", "year"))
-write.csv(dat4, "Data/salmon_env_1719.csv")
+
+#write.csv(dat4, "Data/salmon_env_1719.csv")
 ```
 
-Analysis has been moved to new rmarkdown file: 
+## Qualitative sediment
+Want to be able to account for differences in sediment at seagrass sites for data exploration purposes/analysis
+```{r}
+
+```
+
+Analysis has been moved to new rmarkdown file: Salmon_env_analysis_pow.Rmd

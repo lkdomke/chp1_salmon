@@ -1,0 +1,1113 @@
+---
+title: "Salmon environmental analysis (2017 and 2019)"
+author: "Lia Domke"
+date: "11/23/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+This analysis is for the bulk of chapter 1, specifically **objective 1**
+
+1) Investigate variability in commercially important fish, specifically chum (O. keta) and pink (O. gorbuscha) abundance and biomass in the nearshore ecosystem and their potential environmental drivers. 
+
+I had three hypothesis I was interested in testing. 
+
+H1: Eelgrass canopy height and density will increase with sea otter density and Julian day but will not vary between years. 
+
+H2: *Salmonid catch* by species is influenced by:
+- eelgrass biomass, density, and/or canopy height, 
+- distance from anadromous stream, time of year (Julian day), 
+- temperature, 
+- sea otter density, salinity, and 
+- qualitative sediment. 
+Salmon catch will increase with eelgrass complexity, salinity and sea otter density. It will decrease with distance from anadromous stream, temperature, and julian day. There will not be a relationship between qualitative sediment and salmon abundance (Table 4 in outline). 
+
+H3: *Salmonid biomass* by species (chum and pink salmon) is influenced by:
+- eelgrass biomass, 
+- distance from anadromous stream, 
+- time of year (Julian day), temperature, 
+- sea otter density, 
+- salinity, and 
+- sediment type. 
+Salmon biomass will increase with eelgrass complexity, salinity and sea otter density. It will decrease with distance from anadromous stream, temperature, and julian day. There will not be a relationship between qualitative sediment and salmon biomass
+
+
+```{r data include=FALSE}
+dat4 <- read.csv("Data/salmon_env_1719.csv", stringsAsFactors=FALSE, header = TRUE)
+```
+
+
+```{r libraries include=FALSE}
+library(tidyverse)
+library(corrgram)
+library(MASS)
+library(pscl)
+library(visreg)
+library(readxl)
+library(lubridate)
+library(mgcv)
+library(reshape2)
+library(cowplot)
+library(lmtest)
+library(onewaytests)
+library(AICcmodavg)
+```
+
+```{r theme settings, include=FALSE}
+# Creates custom base plot theme that can adjust every graph that you use plot_theme for!
+
+plot_theme <- function() {
+  theme_bw(base_size = 48, base_family = "Avenir Black") %+replace%
+    theme(panel.background  = element_blank(),
+            plot.background = element_rect(fill="transparent", colour=NA), 
+            legend.background = element_rect(fill="transparent", colour=NA),
+            legend.key = element_rect(fill="transparent", colour=NA),
+            panel.grid.major = element_blank(), 
+            panel.grid.minor = element_blank())
+}
+
+# to use ggsave and export plots include argument 'device=cario_pdf' e.g.: 
+# ggsave("name.pdf", device=cairo_pdf, width = 6, height = 6)
+```
+
+# Exploratory Analaysis (EDA)
+Some basic visualizations to start to understand what the data looks like. 
+```{r}
+# visualize relationships among variables: scatterplot matricies
+ corrgram(dat4[,c(6,9,15,18,19,20,25,27:29,31,35,36)], lower.panel= panel.shade,
+          upper.panel=panel.cor, diag.panel=panel.density, 
+          labels = c("so_density", "year", "dissolved_o2_mgL", "salinity_ppt", 
+                     "tempC", "avg_shoot_dens", "julian_day", "chum_abund",
+                     "coho_abund", "pink_abund", "sal_abund", "dist_anad",
+                     "seag_biom"))
+
+#pairs(dat[,c(4,5,8,14,17,18,20,21,24:30,34:35)], lower.panel = panel.smooth)
+```
+
+Looking at the corrgram there is a lot going on. However, a few relationships stand out (i.e. pearson correlation greater than .6)
+
+- There is a positive correlation between chum salmon abundance and overall salmon abundance. 
+
+- Same between pink and overall salmon abundance. This is sorta unneccessary to know. 
+
+- Positive correlation between shoot density and biomass (duh)
+
+**Correlations below .6**
+
+- year and salinity are positively correlated. 
+
+- year and shoot density have some positive correlation (0.39)
+
+- year and julian day are negatively correlated (likely because I only sampled in the early summer in 2019). 
+
+- temperature has a positive relationship with julian day (0.44) and a negative one with distance from anadromous stream
+
+- julian day appears has a positive correlation with seagrass biomass which makes sense because generally seagrass biomass/growth increases throughout the summer peaking in July. 
+
+So **take aways** for the following models (H2 and H3):
+
+- don't use seagrass biomass and shoot density in the same model (based on each other)
+- Might want to consider not including seagrass biom and julian day in the same model 
+
+But first lets look into the first hypothesis
+# H1
+H1: Eelgrass canopy height and/or density and/or biomass will increase with sea otter density and Julian day but will not vary between years. 
+
+## Seagrass Density
+```{r}
+# is there a correlation between sea otter density and seagrass density
+glimpse(dat4)
+pearson_cor <- cor(dat4$avg_density, dat4$avg_shoot, use = "complete.obs")
+# based on pearson correlation there is a slight negative correlation. Is it statistical?
+par(mfrow=c(1,1))
+plot(dat4$avg_density, dat4$avg_shoot)
+```
+Average sea otter density and shoot density have a slight negative correlation (`r pearson_cor`). With only a few sites with extremely high sea otter density (and approx average shoot density) its hard to see a strong linear relationship. 
+
+Is this slight pattern statistically significant? 
+```{r}
+lm_eel <- lm(avg_shoot ~ avg_density + juli_date, data = dat4)
+summary(lm_eel)
+par(mfrow=c(2,2))
+plot(lm_eel, which = 1:4)
+# nope, should probably include them together in the models...
+```
+Looking at the diagnositc plots, it doesn't look like there are strong patterns in the residuals (so likely meets the homoscedasticity in the residuals assumption). However, there is some concavity in the Normality QQ plot indicating possibility of non-normally distributed residuals. 
+The cooks plot may indicate a few possible outliers (case numbers 40 and 33). 
+
+```{r}
+par(mfrow=c(1,1))
+plot(dat4$avg_density, dat4$avg_shoot)
+abline(lm(dat4$avg_shoot ~ dat4$avg_density + dat4$juli_date))
+```
+Because of the non normality of the residuals, might quickly try fitting the data using glms
+  - know that overdispersion is a thing with poisson models and its specifically for count data, so try using negative binomial. 
+```{r}
+glm_eel <- glm.nb(avg_shoot ~ avg_density * juli_date, data = dat4)
+# data is not count data (well it is but because its averaged over site, its not?)
+summary(glm_eel)
+par(mfrow=c(2,2))
+plot(glm_eel, which = 1:4)
+```
+
+Although homoscedasticity is not an assumption for glms it looks like there may be a pattern in the residuals of increasing variance (overdispersion). Good thing we didn't use a poisson model, but what does that mean for this model? If I tranform the response before I put it into the model does that help?
+```{r}
+attach(dat4)
+hist(avg_shoot)
+hist(log(avg_shoot + 1))
+hist((avg_shoot)^(1/2))
+hist((avg_shoot)^(1/4))
+detach(dat4)
+# Just based on visual assessment I like the looks of the data after its log transformed but if the residuals look bad I can try fourth root too. 
+avg_shoot_4th <- (dat4$avg_shoot)^(1/4) 
+glm_eel_4th <- glm.nb(avg_shoot_4th ~ avg_density + juli_date, data = dat4, init.theta = 1147167, 
+                      control = glm.control(maxit = 10000))
+summary(glm_eel_4th)
+plot(glm_eel_4th, which = 1:4)
+
+######
+avg_shoot_log <- log(dat4$avg_shoot + 1)
+
+glm_eel_log <- glm.nb(avg_shoot_log ~ avg_density + juli_date, data = dat4, init.theta = 2516424, 
+                      control = glm.control(maxit = 1000))
+summary(glm_eel_log)
+par(mfrow=c(2,2))
+plot(glm_eel_log, which = 1:4)
+
+par(mfrow=c(1,2))
+visreg(glm_eel_log, scale = "response")
+```
+Lets go with the log transformed data, just cause the diagnostic plots look slightly better. Right now I'm ignoring the issue of using non-count data as a response while using negative binomial family. A way to deal with this might be to use an "offset" variable based on area. 
+A basic equation for this may start as: 
+$$log{\mu_{x}} = \beta_{0} + \beta_{1}$$
+But instead of just the number of shoots ($$\mu_x$$) we're interested in the number of shoots per a certain area (in this case $$t_x$$). Giving us: 
+$$ log\frac{\mu_{x}}{t_x} = \beta_{0} + \beta_{1} $$
+If you rearrange this equation you can get the offset on the RHS of the equation
+$$ log{(\mu_{x})} = log{(t_x)} + \beta_{0} + \beta_{1}$$
+Okay, but the reality is I'm not sure how to incoorporate the "log of area" into the model equation. Response needs to be count data (but count is at the quadrat level whereas all the explanatory variables are at the site level). How?!
+
+Without including the offset: 
+**When accounting for changes over date, there is not a relationship between average sea otter density and average shoot density.** 
+
+
+*glms*!
+Okay so in order to be able to use glms with poisson or negative binomial distribution the response needs to be count based. 
+One way of doing this is to keep the raw count numbers for each quadrat at each site (so there will be 8 quadrats/site in 2017 and 5 quadrats/site in 2019) and then create a column with the total area sampled (effort) which in 2017 was 2.0 m2 and in 2019 was 1.25 m2. I will then be able to use a poisson or neg bin model with this formul:
+$$ log(Number ofBlades) = year + julian + soDensity $$
+ ** one note about sea otter density being included in the model -- represents a potential INDIRECT relationship between eelgrass density and sea otter density which shouldn't be modeled in a linear model, I think. 
+```{r}
+# first I need to read the original density data in
+# 2019 data
+hab_qrt <- read_excel("../APECS Master repository/APECS Master repo/ALL_DATA/Lia_fish/Habitat_2019_RAW_10-23-19.xlsx", 
+                      sheet = 1)
+
+# 2017 data
+eel17 <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3A5e946e41-4f5f-4499-9969-766f01113971"),
+                  stringsAsFactors = FALSE, header = TRUE)
+
+# universal names data
+name <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3A87744ced-530b-4bae-809e-ff1012c7ae72"), stringsAsFactors = FALSE, header = TRUE)
+
+# Then clean them up briefly
+eel17.2 <- eel17 %>%
+  dplyr::select(site, YYYYMMDD, quadrat, eelgrass_shoots_0.25msq, flowering_shoots_0.25msq) %>%
+  rowwise() %>%
+  mutate(shoots_0.25msq = eelgrass_shoots_0.25msq + flowering_shoots_0.25msq) %>%
+  ungroup() %>%
+  group_by(site, YYYYMMDD) %>%
+  dplyr::summarise(total_shoots_0.25msq = sum(shoots_0.25msq)) %>%
+  mutate(year = "2017") %>%
+  mutate(total_area_sampled_msq = "2")
+
+hab_qrt$density <- as.integer(hab_qrt$density)
+hab_qrt$flowering_shoots <- as.integer(hab_qrt$flowering_shoots)
+
+eel19 <- hab_qrt %>%
+  dplyr::filter(habitat == "seagrass") %>%
+  dplyr::mutate(shoots_0.25msq = density + flowering_shoots) %>%
+  group_by(site, YYYYMMDD) %>%
+  dplyr::summarise(total_shoots_0.25msq = sum(shoots_0.25msq)) %>%
+  mutate(year = "2019") %>%
+  mutate(total_area_sampled_msq = "1.25")
+
+eel17.3 <- left_join(eel17.2, name, by = (c("site" = "site_2017")))%>%
+  dplyr::select(site, YYYYMMDD, total_shoots_0.25msq, year, total_area_sampled_msq, 
+                place_name, bay_code, bay_sample)
+
+eel19$site <- as.factor(eel19$site) # set as factor so names can be changed
+levels(eel19$site)[levels(eel19$site)=="Chusini Cove"] <- "Chusini-Kladein Flat"
+levels(eel19$site)[levels(eel19$site)=="Farallon Bay"] <- "Farallon"
+levels(eel19$site)[levels(eel19$site)=="Goats mouth inlet"] <- "Goat Mouth Inlet"
+levels(eel19$site)[levels(eel19$site)=="Guktu Bay"] <- "Guktu"
+levels(eel19$site)[levels(eel19$site)=="Kaguk Cove"] <- "Kaguk "
+levels(eel19$site)[levels(eel19$site)=="Natzuhini Bay"] <- "Natzuhini"
+levels(eel19$site)[levels(eel19$site)=="Naukati Bay"] <- "Naukati"
+levels(eel19$site)[levels(eel19$site)=="North Fish Egg Island"] <- "North Fish Egg"
+levels(eel19$site)[levels(eel19$site)=="South Fish Egg Island"] <- "South Fish Egg"
+levels(eel19$site)[levels(eel19$site)=="South Wadleigh Island"] <- "South Wadleigh"
+
+eel19$site <- as.character(eel19$site)
+
+eel19.2 <- left_join(eel19, name, by = (c("site" = "site_2019"))) %>%
+  dplyr::select(site, YYYYMMDD, total_shoots_0.25msq, year, total_area_sampled_msq, 
+                bay_code, bay_sample)
+
+eel <- full_join(eel19.2, eel17.3) %>%
+  unite(site_code, bay_code:bay_sample, remove = FALSE) %>%
+  dplyr::select(-place_name) %>%
+  left_join(name) %>%
+  dplyr::select(-c(bay_code, bay_sample, siteID_NOAA, site_2017, site_2018, site_2019, study,
+                   habitat, latitude, longitude, freshwater, sediment_description,
+                   general_description))
+
+eel$year <- as.integer(eel$year)
+dat4$year <- as.integer(dat4$year)
+# join w/ dat4
+
+eel$place_name <- as.factor(eel$place_name) # set as factor so names can be changed
+levels(eel$place_name)[levels(eel$place_name)=="Baker Island"] <- "Baker Island - eel"
+levels(eel$place_name)[levels(eel$place_name)=="Heceta Island"] <- "Heceta"
+levels(eel$place_name)[levels(eel$place_name)=="Klawock Airport"] <- "Klawock airport"
+levels(eel$place_name)[levels(eel$place_name)=="Calder Bay"] <- "Shakan - eel"
+eel$place_name <- as.character(eel$place_name)
+
+dat5 <- left_join(dat4, eel, by = c("site" = "place_name", "year")) %>%
+  dplyr::select(-c(X, site.y))
+```
+
+Okay lets try out these glms w/ a neg bin
+**use dat5 as the correct dataset with density counts**
+```{r}
+dat5$total_area_sampled_msq <- as.numeric(dat5$total_area_sampled_msq)
+# lets look at the distribution of the density counts 
+par(mfrow=c(1,1))
+hist(dat5$total_shoots_0.25msq) # looks pretty good
+par(mfrow=c(1,2))
+plot((total_shoots_0.25msq/total_area_sampled_msq) ~ year, data = dat5)
+plot(total_shoots_0.25msq ~ year, data = dat5)
+
+plot(total_shoots_0.25msq/total_area_sampled_msq ~ juli_date, data = dat5)
+plot(total_shoots_0.25msq ~ juli_date, data = dat5)
+
+eel_dens <- glm(total_shoots_0.25msq/total_area_sampled_msq ~ year + juli_date + avg_density, data = dat5, family = "gaussian")
+summary(eel_dens)
+par(mfrow=c(2,2))
+plot(eel_dens, which = 1:4)# increase in variance along the predicted values. Might be driven by a select few sites with large counts (south fish egg and north fish egg)
+
+eel_pois <- glm(total_shoots_0.25msq ~ year + juli_date + avg_density +
+                  offset(log(total_area_sampled_msq)), family = "poisson", 
+                data = dat5)
+summary(eel_pois)
+plot(eel_pois, which = 1:4) # still seeing the increase in variance and deviation from normality (not dire when it comes to assumptions, but implies that the data does not fit the model)
+
+eel_dens_nb <- glm.nb(total_shoots_0.25msq ~ year + juli_date + avg_density +
+                   offset(log(total_area_sampled_msq)), data = dat5)
+summary(eel_dens_nb)
+plot(eel_dens_nb, which = 1:4)
+
+eel_dens_nb2 <-glm.nb(total_shoots_0.25msq ~ year + juli_date +
+                   offset(log(total_area_sampled_msq)), data = dat5)
+summary(eel_dens_nb2)
+plot(eel_dens_nb2, which = 1:4)
+
+anova(eel_dens_nb2, eel_dens_nb, test = "Chisq")
+anova(eel_dens_nb, test = "Chisq")
+
+# interestingly, avg density of sea otters significantly decreased th residual deviance of the model when it is included.
+AICc(eel_dens_nb);AICc(eel_dens_nb2) # based on AIC values the first model reduced the AIC value more than the second. Lets move forward without sea otter density
+
+visreg(eel_dens_nb2, scale = "response")
+```
+
+Based on seagrass counts (density), year significantly contributes to a model that predicts seagrass density. Seagrass density increases between 2017 and 2019. Is this driven by a few sites/plots or across most sites?
+```{r}
+# what are the outliers?
+plot(eel_dens_nb2, which = 1:4)
+plot(total_shoots_0.25msq/total_area_sampled_msq ~ year, data = dat5[-c(40,33,22),])
+# potential outliers are 40, 33, 22
+eel_dens_nb3 <-glm.nb(total_shoots_0.25msq ~ year + juli_date + offset(log(total_area_sampled_msq)), 
+                      data = dat5[-c(40, 33, 22),])
+summary(eel_dens_nb3) 
+par(mfrow=c(2,2))
+plot(eel_dens_nb3, which = 1:4)
+
+par(mfrow=c(1,2))
+visreg(eel_dens_nb3, scale = "response") # well even if you drop some of the large outliers it still looks like density is greater in 2019 compared to 2017
+```
+
+Even without outliers (but I think they should still be included) year significantly contributes to a model that predicts seagrass density. Julian day maybe should be considered as well (just based on what we know about the ecology of eelgrass, but isn't sig. contributing to the model)
+
+## Seagrass Biomass
+What about seagrass biomass?
+### Biom ~ s_dens + julian
+```{r}
+cor(dat4$avg_density, dat4$avg_biom_site_gm2, use = "complete.obs")
+# based on pearson a slight positive correlation, statistical?
+
+lm_eel.biom <- lm(avg_biom_site_gm2 ~ avg_density * juli_date, data = dat4)
+summary(lm_eel.biom) # julian day appears to be significiant in predicting average biomass (which we knew)
+
+par(mfrow=c(1,1))
+plot(avg_biom_site_gm2 ~ avg_density, data = dat4)
+abline(lm(dat4$avg_biom_site_gm2 ~ dat4$avg_density)) 
+# not a strong relationship, but slightly positive
+
+plot(avg_biom_site_gm2 ~ juli_date, data = dat4)
+abline(lm(dat4$avg_biom_site_gm2 ~ dat4$juli_date), col = "red") # definitely increases with date
+
+par(mfrow=c(2,2))
+plot(lm_eel.biom, which = 1:4) # not the greatest residuals using a basic gaussian linear regression. Issues with normality and homogeneity.
+
+```
+Simiar non-existence of a significant pattern between sea otter avg density and seagrass biomass. 
+However, there is between julian date and seagrass biomass. 
+If you look at the residuals, however, there are a few questionable things. The variation of the resdiuals from the normal QQ line indicates that there may be some kind of skew in the seagrass biomass data. It could be worthwhile to try more flexible models? (or transformations)?
+
+Lets try transforming the response first
+```{r}
+attach(dat4)
+par(mfrow=c(2,2))
+hist(avg_biom_site_gm2)
+hist(log(avg_biom_site_gm2))
+hist((avg_biom_site_gm2)^(1/2))
+hist((avg_biom_site_gm2)^(1/4))
+detach(dat4)
+```
+Well the fourth root and the log transformations both look pretty normal. Either one would be good to try out with the linear model. 
+
+Log transformed
+```{r}
+lm_eel.biom.log <- lm(log(avg_biom_site_gm2) ~ avg_density + juli_date, data = dat4)
+summary(lm_eel.biom.log)
+par(mfrow=c(2,2))
+plot(lm_eel.biom.log, which = 1:4)
+```
+Looks like theres a strange pattern in the residuals decreasing in width across the fitted values. 
+
+4th root transformed
+```{r}
+lm_eel.biom.4 <- lm((avg_biom_site_gm2 ^(1/4)) ~ avg_density + juli_date, data = dat4)
+summary(lm_eel.biom.4)
+par(mfrow=c(2,2))
+plot(lm_eel.biom.4, which = 1:4)
+```
+Still same pattern in the residual v. fitted plot. Lets try maybe a more flexible fitting approach using glms fit with maximum likelihood. 
+
+Trying *glms*
+ with gaussian distribution
+```{r}
+glm_gaus <- glm(log(avg_biom_site_gm2) ~ juli_date + avg_density, 
+    data = dat4, family = "gaussian") # no sig intx, removed
+summary(glm_gaus)
+par(mfrow=c(2,2))
+plot(glm_gaus, which = 1:4)
+```
+residuals don't look great but is that because we're leaving out an important explanatory pattern? 
+Add in year
+
+### Biom ~ year + julian
+What about between years, we know that julian day is important so lets keep that in the model if possible. 
+```{r}
+par(mfrow=c(1,1))
+plot(avg_biom_site_gm2 ~ year, data = dat4) # looking like there isn't much of a pattern between years. 
+```
+
+Just out of curiosity lets look at the site level variation between biomass of seagrass across years. 
+#### Biomass variation by site 
+Lets look at the variation by site in 2017 and 2019 of seagrass biomass
+```{r}
+eel_biom17 <- read.csv("../APECS Master repository/APECS Master repo/ALL_DATA/seagrass_biometrics_CLEAN.csv", stringsAsFactors = FALSE, header = TRUE)
+
+# determin max leaf length
+eel_biom17 <- eel_biom17 %>% 
+  rowwise() %>%
+  mutate(max_length = max(leaf_length1, leaf_length2, leaf_length3, leaf_length4, leaf_length5,
+                          leaf_length6, leaf_length7, leaf_length8, leaf_length9, leaf_length10,
+                          na.rm=TRUE)) %>%
+  mutate(mean_length = mean(leaf_length1, leaf_length2, leaf_length3, leaf_length4, leaf_length5,
+                            leaf_length6, leaf_length7, leaf_length8, leaf_length9,
+                            leaf_length10, na.rm=TRUE))
+
+eel_biom17 <- eel_biom17 %>%
+  mutate(shoot_dw = shoot_foil_dw-shoot_foil) %>% # calculate dry weight biomass by shoot
+  group_by(site, quadrat) %>%
+  mutate(avg_biom_per_quad = mean(shoot_dw)) %>%
+  dplyr::select(site:plant, avg_biom_per_quad, mean_length, max_length, shoot_dw,
+                rhi_length:notes)
+
+eel_biom_dens17 <- eel_biom17 %>%
+  dplyr::select(site:avg_biom_per_quad, -plant) %>%
+  distinct() %>% 
+  left_join(eel17, by = c("site", "quadrat")) %>%
+  mutate(total_shoots_0.25msq = eelgrass_shoots_0.25msq + flowering_shoots_0.25msq) %>%
+  mutate(shoots_1msq = total_shoots_0.25msq * 4) %>%
+  dplyr::select(site:YYYYMMDD.y, depth_m,eelgrass_shoots_0.25msq:shoots_1msq, -notes) %>%
+  mutate(biom_per_quad_0.25msq = avg_biom_per_quad * total_shoots_0.25msq) %>%
+  mutate(biom_msq = biom_per_quad_0.25msq * 4)
+
+biomass_var_2017 <- eel_biom_dens17 %>%
+  ggplot() + 
+  geom_boxplot(aes(y = biom_msq, x = site)) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+Lets look at 2019 too
+```{r}
+eel_biom19 <- read.csv("../APECS Master repository/APECS Master repo/ALL_DATA/seagrass_biomass_conversions.csv", stringsAsFactors = FALSE, header = TRUE)
+
+biomass_var_2019 <- eel_biom19 %>%
+  mutate(biom_msq = avg_biomass * density_m2) %>%
+  ggplot() +
+  geom_boxplot(aes(y = biom_msq, x = site)) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+plot together
+```{r}
+plot_grid(biomass_var_2017, biomass_var_2019,
+          nrow = 1, ncol = 2)
+```
+
+
+```{r}
+
+range(dat4$avg_biom_site_gm2)
+range(dat4$avg_shoot)
+
+par(mfrow=c(2,3))
+hist(dat4$avg_biom_site_gm2)
+hist(log(dat4$avg_biom_site_gm2))
+hist(log(dat4$avg_biom_site_gm2+1))
+hist((dat4$avg_biom_site_gm2^(1/4))) # fourth root
+hist(dat4$avg_biom_site_gm2^(1/2)) # square root
+```
+
+Okay so looking at a few of the transformations of the seagrass biomass data, I'm not sure which transformation does that best job of adjusting the data. Fourth root seems to deal with the large number of zeros or close to zeros. Lets look at the model residuals to get a better idea of the assumptions. 
+```{r}
+# gaussian distribution
+biom <- glm(avg_biom_site_gm2 ~ year + juli_date, data = dat4, family = "gaussian")
+summary(biom)
+par(mfrow=c(2,2))
+plot(biom, which = 1:4) # intx not sig - removed
+# looks like julian day is significant (makes sense). Theres some concavity in the normality plot... 
+
+biom_log <- glm(log(avg_biom_site_gm2) ~ year + juli_date, data = dat4, family = "gaussian") # intx not sig - removed
+summary(biom_log)
+par(mfrow=c(2,2))
+plot(biom_log, which = 1:4) # uff PREETTTTY normlaity plot and the residuals (for the most part) look nicely distributed around 0
+
+biom_4 <- glm((avg_biom_site_gm2)^(1/4) ~ year + juli_date, data = dat4, family = "gaussian") # intx not sig - removed
+summary(biom_4)
+par(mfrow=c(2,2))
+plot(biom_4, which = 1:4)
+
+biom_4_noyear <- glm((avg_biom_site_gm2)^(1/4) ~ juli_date, data = dat4, family = "gaussian") # intx not sig - removed
+summary(biom_4_noyear)
+par(mfrow=c(2,2))
+plot(biom_4_noyear, which = 1:4)
+
+AIC(biom_log);AIC(biom_4);AIC(biom_4_noyear) # fourth root transformation causes a large decrease in the AIC values...
+anova(biom_4)
+
+# what if we throw sea otter density back in just to see 
+biom_4_dens <- glm((avg_biom_site_gm2)^(1/4) ~ year + avg_density + juli_date, data = dat4, family = "gaussian") # intx not sig - removed
+summary(biom_4_dens)
+par(mfrow=c(2,2))
+plot(biom_4_dens, which = 1:4)
+# still not sig but obviously including year was an impt explanatory variable to deal with some of the residual issues. 
+```
+Based on the model summary and resdiaul plots biom_4 looks like an appropriate model to look at changes in seagrass biomass across julian day and year. 
+
+Julian day significantly contribute to predicting seagrass biomass across sites on Prince of Wales and year explains some of the variability in the residuals of the model. 
+
+# H1 conclusion: 
+*Both year and julian day are important variabiles in predicting seagrass biomass across sites on Prince of Wales. Sea otter density was not*
+
+```{r}
+# graph abundance data 
+dat4$site <- reorder(dat4$site, -dat4$avg_density)
+dat4 %>%
+ group_by(site, avg_density, year) %>%
+  summarise(abundance = as.numeric(sum(SALCHIN, SALCHUM, SALCOHO, SALPINK, SALSOCK))) %>%
+  ggplot() + 
+  geom_bar(aes(x = site, y = abundance, fill = as.factor(year)), stat = "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+Initially looking at the salmon abundance across declining density of sea otters it doesn't look like theres much of a pattern. 
+```{r}
+# graph sea otter density against abundance of salmon
+dat4 %>%
+  group_by(site, avg_density, year) %>% 
+  summarise(abundance = as.numeric(sum(SALCHIN, SALCHUM, SALCOHO, SALPINK, SALSOCK))) %>% 
+  ggplot() +
+  theme_classic() +
+  geom_point(aes(x = avg_density, y = abundance, color = as.factor(year)), size = 5) +
+  scale_colour_manual(values = c('#FFCC00', '#663399')) +
+  scale_shape_manual(values = c(17, 19)) +
+  xlab(expression(paste("Sea otter density (#/",km^2,")"))) +
+  ylab("Total salmon abundance (5 species)") +
+  theme(text = element_text(size = 20))
+  
+  
+# look at the sites against the average sea otter density, i.e. which sites had the most sea otters
+ggplot(data = dat4) + 
+  geom_bar(aes(x = site, y = avg_density, fill = as.factor(year)), stat = "identity") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+# visualize distribution of salmon abundance
+#hist(x = dat$abundance)
+#boxplot(dat$abundance)
+# distribution of abundances
+# Can see that there are a lot of zeros and a few low, some mid, and only a few high abundances
+#plot(table(dat$abundance))
+
+
+```
+# H2
+H2: *Salmonid catch* by species is influenced by:
+- eelgrass biomass, density, and/or canopy height,
+- distance from anadromous stream, 
+- time of year (Julian day), 
+- temperature, 
+- sea otter density, 
+- salinity, and 
+- qualitative sediment. 
+
+Salmon catch will increase with eelgrass complexity, salinity and sea otter density. It will decrease with distance from anadromous stream, temperature, and julian day. There will not be a relationship between qualitative sediment and salmon abundance (Table 4 in outline). 
+
+# Models
+## Binomial models 
+(1) Predictor variables: avg_density, juli_date, year (although not as impt as day), dist_anad, temp, salinity, sediment, eelgrass biomass
+(2) Binomial family (salmon is present or not)
+(3) Logit link (because its the binomial family)
+### Graphical exploration
+```{r}
+dat <- dat4 # just cahnge the name so I dont have to change the code below
+dat <- dat %>% 
+  rowwise %>%
+  mutate(abundance = as.numeric(sum(SALCHIN, SALCHUM, SALCOHO, SALPINK, SALSOCK)))
+
+par(mfrow=c(1,1))
+hist(as.numeric(dat$abundance > 0))
+dat$year <- as.factor(dat$year)
+summary(dat)
+
+par(mfrow=c(2,3))
+plot((abundance > 0) ~ avg_density, data = dat)
+plot((abundance >0) ~ avg_shoot, data = dat)
+plot((abundance >0) ~ avg_flowering, data = dat)
+plot((abundance >0) ~ juli_date, data = dat)
+plot((abundance>0) ~ avg_biom_site_gm2, data = dat)
+plot((abundance>0) ~ dist_anad_km, data = dat)
+# hard to see any real patterns of presence of salmon with otter density or shoot density, flowering density
+# or julian date
+
+table((dat$abundance >0), dat$year)
+# there are more sites with salmon than without in 2019, likely due to the time of sampling
+# makes sense that 2017 has about half and half due to the even spread of sampling across the summer. 
+table((dat$abundance >0), dat$juli_date)
+# appears that there are more "false" i.e. no salmon later in the summer when compared to earlier in the summer, once again makes sense based on what we know about out migration of salmon. 
+par(mfrow=c(1,1))
+plot(abundance ~ year, data = dat)
+# looks like th emedian is slightly larger in 2019 than 2017 but that makes sense with the time of year that we sampled in 2019 compared to 2017
+
+dat$binomial[dat$abundance > 0] <- 1
+dat$binomial[dat$abundance == 0] <- 0  
+# convert to 0, 1 for modelling
+
+plot(dat$juli_date, dat$binomial)
+
+ggplot(dat, aes(avg_density, binomial, color = year)) + geom_jitter(width = 0.5, height = 0.05) + facet_wrap(~year, ncol = 1)
+
+ggplot(dat, aes(dist_anad_km, binomial, color = year)) + geom_jitter(width = 0.5, height = 0.05) + facet_wrap(~year, ncol = 1)
+
+ggplot(data = dat, aes(x = reorder(site, -avg_density), y = avg_density, fill = year)) + geom_bar(stat = "identity") + theme(axis.text.x = element_text(angle = 90)) +facet_wrap(~year, ncol = 1)
+
+# finally lets look at a corrigram of the response variables
+library(corrgram)
+corrgram(dat[,c(1,6,8,19,21,24,30)], lower.panel=panel.shade, upper.panel=panel.ellipse,
+         diag.panel=panel.density)
+```
+
+### Model fitting and selection
+Remember from H1 (above) we might want to consider not including seagrass_biomass and julidan_day togther because of a slight correlation (pearson corr = .44). Lets both include them together and not... 
+
+
+Lets start by including potentially important parameters. We know that julian day is key because salmon out migrate during the summer. Lets also include year just in case there were differences between years. Luckily both years were odd years (meaning the same basic population of pink salmon - which make up the majority of our salmon catches in eelgrass). 
+
+Full model w/ intx
+```{r}
+full_mod_bin <- glm(binomial ~ avg_density + juli_date * year * avg_biom_site_gm2 +
+                       salinity_ppt_transect + dist_anad_km, data = dat, 
+                    family = binomial(link = logit))
+
+summary(full_mod_bin)
+par(mfrow=c(2,2))
+plot(full_mod_bin, which = 1:4)
+```
+Interaction between year, day, and seagrass biomass does not appear to be significant. Maybe remove intx terms
+
+Full model w/o intx
+```{r}
+full_mod_bin2 <- glm(binomial ~ avg_density + juli_date + avg_biom_site_gm2 + year +
+                       salinity_ppt_transect + dist_anad_km, data = dat, 
+                    family = binomial(link = logit))
+
+summary(full_mod_bin2)
+par(mfrow=c(2,2))
+plot(full_mod_bin2, which = 1:4)
+
+AICc(full_mod_bin);AICc(full_mod_bin2)
+```
+Removing the interaction term reduces the AIC value, and based on the summary table doesn't significantly contrbute to predicting the presence of salmon. 
+
+```{r}
+
+```
+
+
+```{r}
+# try without interaction (not significant)
+fit1.red <- glm(binomial ~ avg_density+juli_date+year, family = binomial(link = logit), data = dat)
+summary(fit1.red)
+
+fit1.time <- glm(binomial ~ juli_date+year, family = binomial(link = logit), data = dat[-41,])
+summary(fit1.time)
+# compare AIC values and Analysis of Deviance
+AIC(fit1, fit1.red, fit1.time) # reduced has slightly lower AIC value
+anova(fit1, fit1.red, fit1.time, test = "Chisq") # the null hypothesis is rejected indicating
+# that the true model is the second model that includes avg_density, juli_date, and y ear
+anova(fit1, test = "Chisq")
+
+# Try another fit using seagrass densities and date
+# If the seagrass and sea otter have a hypothesized relationship (based on WR work) they should 
+# be in included separately. 
+fit2.intx <- glm(binomial ~ avg_shoot * avg_flowering * juli_date * year, family= binomial(link = logit), data = dat[-41,])
+summary(fit2.intx) # somethign weird happened here... it did not converge...
+# drop the interactions, not significant
+fit2 <- glm(binomial ~ avg_shoot + avg_flowering + juli_date + year, family = binomial(link = logit), data = dat[-41,])
+summary(fit2)
+# looks like julian date is important.... 
+# lets drop the other non significant values and see 
+fit2.red <- glm(binomial ~ juli_date + year, family = binomial(link = logit), data = dat[-41,])
+summary(fit2.red)
+
+anova(fit2.intx, fit2, fit2.red, test= "Chisq")
+AIC(fit2.intx, fit2, fit2.red) # fit 2 reduced only reduces the AIC values by 3... 
+anova(fit2.intx, test = "Chisq")
+
+# How do we look at these two models with different parameters if the  models aren't nested? 
+
+```
+
+### Visualize the binomial models 
+```{r}
+par(mfrow=c(2,2))
+visreg(fit1.red, scale = "response", overlapy = T, gg=T)
+visreg(fit2, scale = "response", overlay = T, gg = T)
+
+# diagnostic plots taken with a grain of salt for binomial models
+par(mfrow=c(2,2))
+plot(fit1.red, which=1:4)
+
+# potential outliers with large influence based on Cook's distance
+dat[4,] # Kaguk (high density, seined in july)
+dat[6,] # Guktu (high, density, seined in August)
+
+# Try and refit the model (fit1.red) without these outliers
+fit1.red.up <- glm(binomial ~ avg_density+juli_date+year, family = binomial(link = logit), data = dat[-c(4,6),])
+summary(fit1.red.up)
+
+visreg(fit1.red.up, scale = "response", overlap = T, gg=T)
+par(mfrow=c(2,2))
+plot(fit1.red.up, which=1:4) # does this look better?
+
+```
+
+## Abundance based models (Poisson and Negative Binomial)
+Okay so we looked at the data using a strictly binomial model (i.e. presence absence) of all salmon species. 
+Can we try to model the salmon abundance (this makes the assumption that all salmon species are influenced by the same conditions)
+### Graphical exploration of salmon abundance
+```{r}
+table(dat4$SALCHIN); table(dat4$SALCHUM); table(dat4$SALCOHO); table(dat4$SALPINK); table(dat4$SALSOCK)
+table(dat4$SALCHIN>0); table(dat4$SALCHUM>0); table(dat4$SALCOHO>0); table(dat4$SALPINK>0); table(dat4$SALSOCK>0)
+# Notice that there are many more zeros than positive numbers. 
+table(dat4$abundance>0)
+prop.table(table(dat4$abundance>0))
+# 68% of the data has a positive abundance
+prop.table(table(dat4$SALCHUM>0))
+prop.table(table(dat4$SALPINK>0))
+prop.table(table(dat4$SALCOHO>0))
+# more positive abundances of chum than pink, but we'll include all salmon together in the model using
+# abundance
+
+hist(dat4$abundance)
+hist(dat4$SALCHUM)
+hist(dat4$SALPINK)
+hist(dat4$SALCOHO)
+# yup a lot of zeros but some positive values. 
+```
+Poisson and all salmon species modeled together
+```{r, echo = FALSE}
+# try to fit to a glm using poisson distribution
+# have to add a constant to abundance data because poisson doens't like zeros
+# this glm framework automatically transforms the data
+fit <- glm(abundance+1 ~ avg_density*year*juli_date*I(juli_date^2)*avg_biom_site_gm2*dist_anad_km, data = dat4, family = poisson)
+summary(fit)
+
+# residuals vs fitted appear to show an increase in variance, check summary output
+# the normal QQ plot indicates a couple worrisome points (case numbers 16 and 25 and 9) ; however
+# the majority of the points fall along the qqline
+plot(fit)
+summary(fit)
+# the residual deviance is greater than the df--this could indicate that there is overdispersion in the data
+
+# try fitting a quasi poission model to better account for the overdispersion
+fit.qp <- glm(abundance+1 ~ avg_density*year*juli_date*I(juli_date^2), data = dat4, family = quasipoisson)
+summary(fit.qp)
+#year, date and their interactions appear to be significant. Residual deviance is extremely higher than
+# than df.... overdispersion. data looks weird
+plot(fit.qp)
+# the residuals against the fitted values looks somewhat better; however, the qqplot looks like it might
+# have a stepwise pattern. A few spurrious points (case numbers 16, 9, 29)
+
+# try even better accounting for the overdispersion through fitting a negative binomial with includes
+# another parameter (theta) to better account for increasing variance
+fit.nb <- glm.nb(abundance ~ year*juli_date*avg_density+I(juli_date^2), data = dat4, init.theta=0.535, control=glm.control(maxit = 50))
+summary(fit.nb)
+# for some reason can't run the glm.nb including *I(juli_date^2) it says that the algorithm does not converge.... even if you use the initial theta of the model without the parameter.have to add it in
+
+fit.nb2 <- glm.nb(abundance ~ year:juli_date + juli_date:avg_density + year:avg_density + juli_date + avg_density + year, data = dat4)
+summary(fit.nb2)
+library(lmtest)
+# Which model is better?
+lrtest(fit.nb2, fit.nb) # there isn't a significant reduction of deviance by including the other interaction variable. drop density*juliday
+AIC(fit.nb2); AIC(fit.nb) # basically the same AIC value 
+
+# Out of curiosity lets look at if we drop all interaction terms aside form julday:year
+fit.nb3 <- glm.nb(abundance ~ avg_density + juli_date + year + juli_date*year, data = dat4)
+summary(fit.nb3)
+lrtest(fit.nb3, fit.nb2)
+
+# Since we know there is a high abundance of zero in the data try and fit the hurdle model
+library(pscl)
+fit.hurdle <- hurdle(abundance ~ avg_density + juli_date + year, data = dat4[-41,], dist = "negbin")
+summary(fit.hurdle)
+
+
+###### try glm with cubic date
+fit.nb.linear <- glm.nb(abundance ~ year+juli_date+avg_density+I(juli_date^2), data = dat4, control=glm.control(maxit = 50))
+
+summary(fit.nb.linear)
+
+fit.nb.linear.PNK <- glm.nb(SALPINK ~ year+juli_date+avg_density+I(juli_date^2)+avg_biom_site_gm2+dist_anad_km, data = dat4,init.theta=0.535, control=glm.control(maxit = 5000))
+summary(fit.nb.linear.PNK)
+visreg(fit.nb.linear.PNK, scale = "response", partial = TRUE)
+```
+
+# GAM models
+```{r}
+
+# try something else out with more flexibility for the julian date
+library(mgcv)
+gam.all <- gam(abundance ~ s(juli_date, k = 4) + avg_density + year + avg_biom_site_gm2 + dist_anad_km, data = dat, family = nb(link = "log"))
+
+summary(gam.all)
+
+a1 <- visreg(gam.all, "juli_date", scale = "response", gg = TRUE, partial = TRUE, alpha = .05) + 
+  theme_classic() +
+  xlab("Julian Date") + ylab("Salmon Abundance") + 
+  geom_point() + coord_cartesian(ylim = c(0, 300))
+a1.1 <- visreg(gam.all, "juli_date", scale = "response", gg = TRUE, partial = TRUE, alpha = .1) + 
+  theme_classic() +
+  xlab("Julian Date") + ylab("Salmon Abundance") + 
+  geom_point() + coord_cartesian(ylim = c(0, 300))
+
+a2 <- visreg(gam.all, "avg_density", scale = "response", gg = TRUE, partial = TRUE) + 
+  theme_classic() +
+  xlab(expression(paste("Sea otter density (#/",km^2,")"))) + 
+  ylab("Salmon Abundance") + geom_point() + coord_cartesian(ylim = c(0, 300))
+  
+a3 <- visreg(gam.all, "avg_biom_site_gm2", scale = "response", gg = TRUE, partial = TRUE) + 
+  theme_classic() +
+  xlab(expression(paste("Eelgrass density (g/",m^2,")"))) + 
+  ylab("Salmon Abundance") + geom_point() + coord_cartesian(ylim = c(0, 300))
+
+a4 <- visreg(gam.all, "dist_anad_km", scale = "response", gg = TRUE, partial = TRUE) + 
+  theme_classic() +
+  xlab(expression(paste("Distance to anadromous stream (",km^2,")"))) + 
+  ylab("Salmon Abundance") + geom_point() + coord_cartesian(ylim = c(0, 300))
+
+plot1 <- plot_grid(a1, a4, a3, a2, align = "hv", label_y = "Salmon abundance", vjust = 0)
+save_plot("WSNPlot1.jpg", plot1)
+
+plot_grid(a1, a1.1)
+```
+
+
+## Gam by species
+```{r}
+#BY species
+gam.coho <- gam(SALCOHO ~ s(juli_date, k = 4) + avg_density + year + avg_biom_site_gm2 + dist_anad_km, data = dat, family = nb(link = "log"))
+
+# coho 
+summary(gam.coho)
+visreg(gam.coho, scale = "response")
+co.so <- visreg(gam.coho, "avg_density", scale = "response", gg = TRUE, partial = TRUE) + 
+  theme_classic() +
+  xlab(expression(paste("Sea otter density (#/",km^2,")"))) + 
+  ylab("Coho abundance") + geom_point() + coord_cartesian(ylim = c(0, 150))
+
+co.eel <- visreg(gam.coho, "avg_biom_site_gm2", scale = "response", gg = TRUE, partial = TRUE) + 
+  theme_classic() +
+  xlab(expression(paste("Eelgrass biomass (g/",m^2,")"))) + 
+  ylab("Coho abundance") + geom_point() +
+  coord_cartesian(ylim = c(0, 150))
+
+co.dist <- visreg(gam.coho, "dist_anad_km", scale = "response", gg = TRUE, partial = TRUE) + 
+  theme_classic() +
+  xlab(expression(paste("Distance from anadromous stream (",km^2,")"))) + 
+  ylab("Coho abundance") + geom_point() +
+  coord_cartesian(ylim = c(0, 150))  
+# Pink salmon
+gam.pink <- gam(SALPINK ~ s(juli_date, k = 4) + avg_density + year + avg_biom_site_gm2 + dist_anad_km, data = dat, family = nb(link = "log"))
+
+summary(gam.pink)
+visreg(gam.pink)
+
+p.so <- visreg(gam.pink, "avg_density", scale = "response", gg = TRUE, partial = TRUE) + 
+  theme_classic() +
+  xlab(expression(paste("Sea otter density (#/",km^2,")"))) + 
+  ylab("Pink abundance") + geom_point() + coord_cartesian(ylim = c(0, 150))
+
+p.eel <- visreg(gam.pink, "avg_biom_site_gm2", scale = "response", gg = TRUE, partial = TRUE) + 
+  theme_classic() +
+  xlab(expression(paste("Eelgrass density (g/",m^2,")"))) + 
+  ylab("Pink abundance") + geom_point() +
+  coord_cartesian(ylim = c(0, 150))
+
+p.dist <- visreg(gam.pink, "dist_anad_km", scale = "response", gg = TRUE, partial = TRUE) + 
+  theme_classic() +
+  xlab(NULL) + 
+  ylab("Pink abundance") + geom_point() +
+  coord_cartesian(ylim = c(0, 150))  
+
+gam.chum <- gam(SALCHUM ~ s(juli_date, k = 4) + avg_density + year + avg_biom_site_gm2 + dist_anad_km, data = dat, family = nb(link = "log"))
+
+summary(gam.chum)
+visreg(gam.chum)
+#
+ch.so <- visreg(gam.chum, "avg_density", scale = "response", gg = TRUE, partial = TRUE) + 
+  theme_classic() +
+  xlab(expression(paste("Sea otter density (#/",km^2,")"))) + 
+  ylab("Chum abundance") + geom_point() + coord_cartesian(ylim = c(0, 150))
+
+ch.eel <- visreg(gam.chum, "avg_biom_site_gm2", scale = "response", gg = TRUE, partial = TRUE) + 
+  theme_classic() +
+  xlab(expression(paste("Eelgrass density (g/",m^2,")"))) + 
+  ylab("Chum abundance") + geom_point() +
+  coord_cartesian(ylim = c(0, 150))
+
+ch.dist <- visreg(gam.chum, "dist_anad_km", scale = "response", gg = TRUE, partial = TRUE) + 
+  theme_classic() +
+  xlab(NULL) + 
+  ylab("Chum abundance") + geom_point() +
+  coord_cartesian(ylim = c(0, 150))  
+
+plot.dist <- plot_grid(p.dist, ch.dist, co.dist, align = "hv", vjust = 0)
+save_plot("WSN_dist_19.jpg", plot.dist)
+
+plot.hab <- plot_grid(p.eel, ch.eel, co.eel, align = "hv")
+save_plot("WSN_hab_19.jpg", plot.hab)
+
+plot.otts <- plot_grid(p.so, ch.so, co.so, align = "hv")
+save_plot("WSN_otts_19.jpg", plot.otts)
+```
+
+# GLM PINK, negbin
+If we allow for quadrat data model does it make more sense to use glm by species?
+```{r}
+fit.nb.pink <- glm.nb(SALPINK ~ year*juli_date*avg_density+
+                        I(juli_date^2)*avg_biom_site_gm2*dist_anad_km, 
+                      data = dat4, init.theta=0.535, control = glm.control(maxit = 100))
+summary(fit.nb.pink)
+
+pink.nb2 <- glm.nb(SALPINK ~ year + juli_date + avg_density + I(juli_date^2) * dist_anad_km +
+                     avg_biom_site_gm2, 
+                   data = dat4, init.theta = 0.353, control = glm.control(maxit = 100))
+summary(pink.nb2)
+
+pink.nb3 <- glm.nb(SALPINK ~ year + juli_date + I(juli_date^2) + dist_anad_km + avg_density +
+                     avg_biom_site_gm2, data = dat4, init.theta = 0.469, control = glm.control(maxit = 100))
+summary(pink.nb3)
+
+pink.nb4 <- glm.nb(SALPINK ~ year + juli_date + I(juli_date^2) + dist_anad_km + avg_density,
+                   data = dat4, init.theta = 0.469, control = glm.control(maxit = 100))
+summary(pink.nb4)
+
+pink.nb5 <- glm.nb(SALPINK ~ year + juli_date + I(juli_date^2) + avg_density,
+                   data = dat4, init.theta = 0.469, control = glm.control(maxit = 100))
+
+anova(pink.nb3, pink.nb4, test = "Chisq")
+anova(pink.nb4, pink.nb5, test = "Chisq")
+AICc(pink.nb2);AICc(pink.nb3);AICc(pink.nb4);AICc(pink.nb5)
+AICc(pink.nb3) - AICc(pink.nb4)
+
+anova(fit.nb.pink, test = "Chisq")
+anova(fit.nb.pink, nb.pink2, test = "chisq")
+par(mfrow=c(2,2))
+plot(pink.nb4, which = 1:4)
+```
+
+# GLM with CHUM salmon
+```{r}
+nb.chum <- glm.nb(SALCHUM ~ year*juli_date*avg_density+I(juli_date^2)*avg_biom_site_gm2*dist_anad_km, 
+                  data = dat4, init.theta=0.535, control = glm.control(maxit = 100))
+summary(nb.chum)
+
+nb.chum2 <- glm.nb(SALCHUM ~ year*juli_date + avg_density + I(juli_date^2) + avg_biom_site_gm2 + dist_anad_km, 
+                  data = dat4, init.theta=0.7, control = glm.control(maxit = 100))
+summary(nb.chum2)
+
+nb.chum3 <- glm.nb(SALCHUM ~ year + juli_date + avg_density + I(juli_date^2) + avg_biom_site_gm2 + dist_anad_km, 
+                  data = dat4, init.theta=0.7, control = glm.control(maxit = 100))
+summary(nb.chum3)
+
+nb.chum4 <- glm.nb(SALCHUM ~ year + juli_date + avg_density + I(juli_date^2) + avg_biom_site_gm2, 
+                   data = dat4, init.theta=0.7, control = glm.control(maxit = 100))
+summary(nb.chum4)
+
+nb.chum5 <- glm.nb(SALCHUM ~ year + juli_date + avg_density + I(juli_date^2), 
+                   data = dat4, init.theta=0.7, control = glm.control(maxit = 100))
+
+
+nb.chum6 <- glm.nb(SALCHUM ~ year + juli_date + I(juli_date^2), 
+                   data = dat4, init.theta=0.7, control = glm.control(maxit = 100))
+  
+summary(nb.chum5)
+
+anova(nb.chum3, nb.chum4, test = "Chisq")
+anova(nb.chum4, nb.chum5, test = "Chisq")
+anova(nb.chum5, nb.chum6, test = "Chisq")
+anova(nb.chum3, nb.chum5, test = "Chisq")
+library(AICcmodavg)
+AICc(nb.chum3);AICc(nb.chum4);AICc(nb.chum5);AICc(nb.chum6)
+# Evaluation model fit
+par(mfrow=c(2,2))
+plot(nb.chum3, which = 1:4)
+
+plot(nb.chum3, which = 1:4)
+```
+
+# Zero inflated with COHO SALMON
+```{r}
+zin.coho <- zeroinfl(SALCOHO ~ year*juli_date*avg_density+I(juli_date^2)*avg_biom_site_gm2*dist_anad_km, 
+         data = dat4, dist = "negbin")
+summary(zin.coho)
+
+zin.coho2 <- zeroinfl(SALCOHO ~ year + juli_date + avg_biom_site_gm2,
+                      data = dat4, dist = "negbin")
+summary(zin.coho2)
+
+hurdle.coho <- hurdle(SALCOHO ~ year + juli_date + avg_biom_site_gm2,
+                      data = dat4, dist = "negbin")
+summary(hurdle.coho)
+
+nb.coho <- glm.nb(SALCOHO ~ year + juli_date + avg_biom_site_gm2,
+                      data = dat4)
+summary(nb.coho)
+
+vuong(nb.coho, zin.coho2)
+library(lmtest)
+lrtest(nb.coho, zin.coho2)
+lrtest(nb.coho, hurdle.coho)
+
+visreg(zin.coho2)
+
+```
+
+## Visualizing CHUM models
+Selected model, y = year + julian + julian2 + so_density
+nb.chum5
+```{r}
+visreg(nb.chum5)
+
+chum1 <- visreg(nb.chum5, "juli_date", scale = "response", gg = TRUE, partial = TRUE, alpha = .05) + 
+  theme_classic() +
+  xlab("Julian Date") + ylab("Chum Abundance") + 
+  geom_point() + coord_cartesian(ylim = c(0, 200)) +
+  theme(text = element_text(size = 28))
+
+chum2 <- visreg(nb.chum5, "avg_density", scale = "response", gg = TRUE, partial = TRUE, alpha = .05) + 
+  theme_classic() +
+  xlab(expression(paste("Sea otter density (#/",km^2,")"))) +
+  ylab(NULL) + 
+  geom_point() + coord_cartesian(ylim = c(0, 200)) +
+  theme(text = element_text(size = 28))
+
+summary(nb.chum5)
+plot.chum <- plot_grid(chum1, chum2)
+
+```
+
+## Visualizing PINK models
+Selected model, y = year + julian + julian2 + so_density
+nb.pink4
+```{r}
+visreg(pink.nb4)
+
+pink1 <- visreg(pink.nb4, "juli_date", scale = "response", gg = TRUE, partial = TRUE, alpha = .05) + 
+  theme_classic() +
+  xlab("Julian Date") + ylab("Pink Abundance") + 
+  geom_point() + coord_cartesian(ylim = c(0, 300)) +
+  theme(text = element_text(size = 28))
+
+pink2 <- visreg(pink.nb4, "dist_anad_km", scale = "response", gg = TRUE, partial = TRUE) + 
+  theme_classic() +
+  xlab(expression(paste("Distance from anadromous stream (",km^2,")"))) + 
+  ylab(NULL) + geom_point() +
+  coord_cartesian(ylim = c(0, 200)) +
+  theme(text = element_text(size = 28))
+
+pink3 <- visreg(pink.nb4, "avg_density", scale = "response", gg = TRUE, partial = TRUE, alpha = .05) + 
+  theme_classic() +
+  xlab(expression(paste("Sea otter density (#/",km^2,")"))) +
+  ylab("Pink Abundance") + 
+  geom_point() + coord_cartesian(ylim = c(0, 200)) +
+  theme(text = element_text(size = 28))
+
+plot.pink <- plot_grid(pink1, pink2, pink3)
+summary(pink.nb4)
+```
+
+
+
+## GAM models with long df
+```{r}
+# convert to long dataframe
+# subset dataframe
+dat1 <- dat[, c(1,6,8,23:29,34,35)]
+dat_long <- melt(dat1, id = c("site", "avg_density", "year", "date", "juli_date", "dist_anad_km", "avg_biom_site_gm2"), variable.name = "SpCode", value.name = "abundance")
+
+q1 <- ggplot(dat_long, aes(x = juli_date, y = abundance)) + 
+  geom_point() +
+  theme_classic() + 
+  xlab("Julian Date") + ylab("Abundance")
+q1 + stat_smooth(data = dat_long, method = "gam", formula = y ~ s(x), se = TRUE)
+
+
+# make model
+model <- gam(abundance ~ s(juli_date, k = 4) + avg_density + year + avg_biom_site_gm2 + dist_anad_km + SpCode, data = dat_long, family = nb(link = "log"))
+
+g1 <- visreg(model, "juli_date", scale = "response", gg = TRUE, partial = TRUE) + 
+  theme_classic() +
+  xlab("Julian Date") + ylab("Salmon abundance")
+g1 + facet_wrap(SpCode)
+
+m1 <- gam(abundance ~ s(juli_date, k = 4) + avg_density + year + avg_biom_site_gm2 + dist_anad_km, data = dat, family = nb(link = "log"))
+
+
+
+```
+
