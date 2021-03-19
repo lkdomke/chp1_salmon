@@ -37,6 +37,7 @@ library(raster)
 library(maptools)
 library(sf)
 library(dplyr)
+library(tidyr)
 ```
 
 Input ShoreZone layers
@@ -252,14 +253,13 @@ First lets look at average salmon catch in each habitat type in seso
 # Creates custom base plot theme that can adjust every graph that you use plot_theme for!
 
 plot_theme <- function() {
-  theme_bw(base_size = 14, base_family = "Avenir") %+replace%
+  theme_bw(base_size = 48, base_family = "Avenir Black") %+replace%
     theme(panel.background  = element_blank(),
-            plot.background = element_rect(fill="gray96", colour=NA), 
+            plot.background = element_rect(fill="transparent", colour=NA), 
             legend.background = element_rect(fill="transparent", colour=NA),
             legend.key = element_rect(fill="transparent", colour=NA),
             panel.grid.major = element_blank(), 
-            panel.grid.minor = element_blank(),
-            strip.background = element_rect(colour = "NA", fill = "gray96"))
+            panel.grid.minor = element_blank())
 }
 
 # to use ggsave and export plots include argument 'device=cario_pdf' e.g.: 
@@ -335,30 +335,55 @@ so based on the Mann-Whitney test there is no difference in the median of salmon
 Okay so our question then is:
 * When salmon are present, do they occur more in eelgrass or understory kelp? * 
 H0: structured habitats regardless of type are equally important for salmon
-H1: one structured habitat has more salmon occur in the habitat. So we know that understory kelp occurrs in 39% of the coastline studied and
+H1: one structured habitat has more salmon occur in the habitat. So we know that understory kelp occurrs in 39% of the coastline studied and zostera in 14% but thats not equal to 100% so there is some overlap in sbr and zos line features. 
 
-202181m or 202 km without continuous zostera or soft brown kelps
-219771 or 201 km with both continuous zostera AND soft brown kelps - so theres 201 km of overlap and only 202 km without either. 
-237560
-
-```{r}
-# if we only look at the areas that have ONLY either zostera or Sb kelp then we have a total of
-ttl <- as.vector(zos_km + sbr_km)
-ttl2 <- ttl - 201
-
-ttl2/coast_km # 50.8 % of coastline has hab of interest
-
-# to do, re do coastline calc, zos = c where sbr != c and vice versa then calc new porptions
-
-```
-
+In order to look at exclusively one habitat areas (just eelgrass OR softbrown kelps):
 I went back to QGIS and 'selected features by expression' and did a two part selection. First I selected features where ZOS == 'C' giving selected features of all the continuous zostera. Second I removed all features that were SBR == 'C' resulting in just zostera where soft brown kelps do NOT occur in a continuous way. 
+
+And then I did the same thing for soft brown kelps (sbr)
 ```{r}
 zos_wo_sbr <- 761.489 # km of zostera that aren't with sbr
-sbr_wo_zos <- 2556.18 # km
+sbr_wo_zos <- 2556.18 # km of sbr that aren't overlapping with zos
 
-ttl3 <- zos_wo_sbr + sbr_wo_zos
+ttl <- zos_wo_sbr + sbr_wo_zos # total coastline of either EELGRASS OR SOFTBROWN KELPS
 
-zos_wo_sbr/ttl3
-sbr_wo_zos/ttl3
+zos_wo_sbr_perc <- zos_wo_sbr/ttl*100
+sbr_wo_zos_perc <- sbr_wo_zos/ttl*100
+
+zos_wo_sbr/coast_km
+sbr_wo_zos/coast_km
+ttl/coast_km
 ```
+
+Because we have salmon numbers from *either* eelgrass or understory kelp, lets base our calculations on just the area that has either habitat (not both)
+
+In terms of numbers, this analysis of habitats covers 47% of the total coastline in southern southeast alaska. Just Zostera is 10.8% of the *total* coastline, sbr is 36.5% of the *total* coastline. 
+```{r}
+habitat <- c("eelgrass", "kelp")
+expected_perc2 <- c(as.vector(zos_wo_sbr_perc/100), as.vector(sbr_wo_zos_perc/100))
+expected_freq2 <- c((x$sum * (zos_wo_sbr_perc/100)), (x$sum *(sbr_wo_zos_perc/100)))
+observed_freq2 <- c(zos_sal, sbr_sal)
+n2 <- c(n_in_eel$`n()`, n_in_sbr$`n()`)
+
+dat_singhab <- data.frame(habitat, expected_perc2, expected_freq2, observed_freq2, n2)
+```
+
+```{r}
+dat_singhab %>%
+  dplyr::select(-n2,-expected_perc2) %>%
+  pivot_longer(cols=expected_freq2:observed_freq2) %>%
+  ggplot() +
+  geom_bar(aes(x = name, y = value, fill = habitat), stat = "identity") +
+  ylab("Number of Salmon Caught") + xlab(NULL) +
+  scale_x_discrete(labels=c("expected_freq2" = "Expected Frequency", 
+                            "observed_freq2" = "Observed Frequency")) +
+  scale_fill_manual(values = c("#339900", "#D16103"), name = "Habitat", 
+                   labels = c("Eelgrass", "Understory Kelp")) +
+  plot_theme()
+```
+
+Set up the chi square test
+```{r}
+chisq.test(dat_singhab$observed_freq2,p=dat_singhab$expected_perc2)
+```
+
