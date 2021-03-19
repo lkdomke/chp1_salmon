@@ -232,6 +232,8 @@ ggplot(env_long) +
 ```
 
 ## Standardization env
+
+
 # NMDS work
 ## Calculate dissimilarity index for both dataframes
 ## Dispersion test 

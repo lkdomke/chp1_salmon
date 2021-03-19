@@ -6,6 +6,7 @@ output: html_document
 editor_options: 
   chunk_output_type: console
 ---
+** Before you take everything for granted, need to make sure and go through the data and models to make sure the same thing still happens because you added a comparison site of kelp - S/G along Craig Highway** 10/9/2020
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -29,6 +30,8 @@ library(lubridate)
 library(tidyr)
 library(ggplot2)
 library(visreg)
+library(AICcmodavg)
+library(MASS)
 ```
 
 # Data
@@ -348,7 +351,8 @@ First lets subset the "all sites data" into just the sites that we can pair so w
 # Also, two of the klawock sites happened in SEPTEMBER. There's no chance of seeing salmon in the nearshore that late in summer, drop 248, 241, 240
 # Lets create a list we can subset the data by
 
-EventID_comp <- c(244, 245, 240, 241, 571, 572, 3168, 3170, 3169, 3173, 3172, 3174, 3171, 3181, 3179, 3180, 3177, 3178, 3175, 3176,  3188, 3186, 3187, 3191, 3189, 3190, 573, 574)
+# need to add a comparison sites between kelp - s/g that I found EventIDs: 397/400 and 370/371 happened in June can also look at seines in May (diff eventID)
+EventID_comp <- c(244, 397, 400, 370, 371, 245, 240, 241, 571, 572, 3168, 3170, 3169, 3173, 3172, 3174, 3171, 3181, 3179, 3180, 3177, 3178, 3175, 3176,  3188, 3186, 3187, 3191, 3189, 3190, 573, 574)
 
 # subset the data
 fish.count.sub <- subset(fish.counts, EventID %in% EventID_comp)
@@ -362,7 +366,11 @@ drop <- fish.sub %>%
   filter(SiteID == "133" & EventID != "244" | 
            SiteID == "134" & EventID != "245"|
            SiteID == "131" & EventID != "236"|
-           SiteID == "132" & EventID != "237")
+           SiteID == "132" & EventID != "237"|
+           SiteID == "143" & EventID != "370"|
+           SiteID == "144" & EventID != "371"|
+           SiteID == "145" & EventID != "397"|
+           SiteID == "146" & EventID != "400")
 
 fish.sub <- fish.sub %>%
   anti_join(drop)
@@ -377,7 +385,10 @@ pair.fish <- fish.sub %>%
                                                  ifelse(Locale %in% "Sylburn Harbor", "Sylburn Harbor", 
                                                         ifelse(Locale %in% "Dall Bay", "Dall Bay",
                                                                ifelse(SubLocale %in% "Ballena Island", "Ballena Island",
-                                                                      ifelse(SubLocale %in% c("Clam Island","Wadleigh Island"), "South Wadleigh", "Klawock Inlet")))))))))
+                                                                      ifelse(SubLocale %in% c("Clam Island","Wadleigh Island"), 
+                                                                             "South Wadleigh",
+                                                                             ifelse(EventID %in% c("397", "400", "370", "371"), "Craigh Highway",
+                                                                             "Klawock Inlet"))))))))))
 ```
 
 Okay now that we only have the sites we're for sure interested and we made sure that they were done in the same timeframe (generally within a few days of each other) and that we've paired them by site_pair -- lets do some exploratory analysis of salmon cpue.
@@ -418,6 +429,7 @@ sal_env <- subset(anad_dist, SiteID %in% SiteID_comp) %>%
   mutate(julian = yday(date)) %>%
   mutate(dist_km = NEAR_DIST/100)
 
+sal_env$abundance[is.na(sal_env$abundance)] = 0 # add in zeros for abundance
 # write out csv in case we have other interest for this dataset
 # write.csv(sal_env, "Data/NOAA_SSEAK_salmon.csv")
 # looks like theres a couple sites where we don't have environmental information. 
@@ -519,7 +531,7 @@ We've done some basic visualizations above, but lets also look at normality, out
 ```{r}
 # abundance histograms
 hist(sal_env$abundance) # lots of zeros and a few large abundances
-hist(log(sal_env$abundance)) # looks slightly more normal...
+hist(log(sal_env$abundance+1)) # looks slightly more normal...
 plot(density(sal_env$abundance))
 
 
@@ -557,6 +569,7 @@ So while investigating normality, a log transformation appears to most appropria
 
 ## Outliers
 ```{r}
+par(mfrow=c(1,1))
 plot(abundance ~ Habitat, data = sal_env) #point occured in an bedrock habitat
 boxplot(abundance ~ SpCode, data = sal_env) # was 800 pink salmon in bedrock
 # if you look at the dataset its row 19 at Johnson Cove (Site # 597) that is the potential outlier
@@ -972,7 +985,7 @@ p2 + scale_color_brewer(palette = "Dark2")
 ```{r}
 p3 <- pink %>%
   drop_na(SpCode) %>%
-  ggplot(aes(x = Salinity, y = abundace, color = Habitat)) + 
+  ggplot(aes(x = Salinity, y = abundance, color = Habitat)) + 
   geom_point(size = 2) + 
   plot_theme() +
   ylab("CPUE") + xlab("Salinity")
@@ -981,7 +994,7 @@ p3 + scale_color_brewer(palette = "Dark2")
 ```{r}
 p4 <- pink %>%
   drop_na(SpCode) %>%
-  ggplot(aes(x = Temp, y = abundace, color = Habitat)) + 
+  ggplot(aes(x = Temp, y = abundance, color = Habitat)) + 
   geom_point(size = 2) + 
   plot_theme() +
   ylab("CPUE") + xlab("Temperature (C)")
@@ -1528,6 +1541,12 @@ summary(p.gam4)
 anova(p.gam, p.gam4, test = "Chisq") # null hypothesis rejected at 0.1
 # if we stay with alpha at 0.5 than the ideal gam model includes dropping both salinity and lat/long
 ```
+
+Real quick export the pink dataset
+```{r}
+#write.csv(pink, "Data/Noaa_pink.csv")
+```
+
 
 # GLM explorations - chum salmon
 

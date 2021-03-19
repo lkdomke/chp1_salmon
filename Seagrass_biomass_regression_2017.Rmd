@@ -228,7 +228,7 @@ quadrat that was done in summer 2019. Use the quadrat_ID to connect to the other
 For this purpose we are interested in only the length data but need to use the quadrat sheet to make sure we only are looking at the eelgrass sites
 newest version of data is : RAW_10-22-19
 ```{r}
-hab_qrt <- read_excel(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3A33a4f3b6-ad30-494d-a0bf-861fe86d729e"))
+hab_qrt <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3A33a4f3b6-ad30-494d-a0bf-861fe86d729e"), stringsAsFactors = FALSE, header = TRUE)
 
 hab_lng <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3Af7c43f66-6800-49b0-9b3d-43e8e39abcd0"), stringsAsFactors=FALSE, header=TRUE)
 
@@ -238,7 +238,7 @@ hab_wgt <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%
 
 ## Data cleaning
 We want only the eelgrass sites and need to convert the length measurements (in mm) to cm 
-``` {r}
+```{r}
 glimpse(hab_qrt)
 
 # Want to only extract the quadrat numbers that were used to sample eelgrass sites
@@ -300,7 +300,7 @@ df1 <- df %>%
 
 df2 <- left_join(df1, dsty, by = "quadrat_ID")
 df3 <- left_join(df2, hab_qrt[,1:2], by = "quadrat_ID")
-write.csv(df3, "../APECS Master repository/APECS Master repo/ALL_DATA/seagrass_biomass_conversions.csv") 
+#write.csv(df3, "../APECS Master repository/APECS Master repo/ALL_DATA/seagrass_biomass_conversions.csv") 
 ```
 
 ### Before July
