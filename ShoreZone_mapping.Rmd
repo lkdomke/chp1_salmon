@@ -382,7 +382,7 @@ dat_singhab %>%
   plot_theme()
 ```
 
-Set up the chi square test
+Set up the chi square test, used this for AMSS Jan 2021 presentation
 ```{r}
 chisq.test(dat_singhab$observed_freq2,p=dat_singhab$expected_perc2)
 ```
