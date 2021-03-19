@@ -35,6 +35,7 @@ Salmon biomass will increase with eelgrass complexity, salinity and sea otter de
 
 ```{r data include=FALSE}
 dat4 <- read.csv("Data/salmon_env_1719.csv", stringsAsFactors=FALSE, header = TRUE)
+
 ```
 
 
@@ -54,11 +55,12 @@ library(onewaytests)
 library(AICcmodavg)
 ```
 
+#plot theme
 ```{r theme settings, include=FALSE}
 # Creates custom base plot theme that can adjust every graph that you use plot_theme for!
 
 plot_theme <- function() {
-  theme_bw(base_size = 48, base_family = "Avenir Black") %+replace%
+  theme_bw(base_size = 24, base_family = "Avenir Black") %+replace%
     theme(panel.background  = element_blank(),
             plot.background = element_rect(fill="transparent", colour=NA), 
             legend.background = element_rect(fill="transparent", colour=NA),
@@ -626,9 +628,20 @@ ggplot(data = dat, aes(x = reorder(site, -avg_density), y = avg_density, fill = 
 
 # finally lets look at a corrigram of the response variables
 library(corrgram)
-corrgram(dat[,c(1,6,8,19,21,24,30)], lower.panel=panel.shade, upper.panel=panel.ellipse,
+corrgram(dat[,c(7, 9, 15, 18:19, 25, 31, 35:37)], lower.panel=panel.shade, upper.panel=panel.ellipse,
          diag.panel=panel.density)
+# 7 - avg_density
+# 9 - year
+# 15 - dissolved O2 @ transect
+# 18 salinity ppt transect
+# 19 temp @ transect
+# 25 - juli date
+# 31 abundance
+# 35 dist anad
+# 36 avg biom
+# 37 bimodial
 ```
+No strong patterns stand out with the binomial -- strongest would be julian date and average biomass (neg corr)
 
 ### Model fitting and selection
 Remember from H1 (above) we might want to consider not including seagrass_biomass and julidan_day togther because of a slight correlation (pearson corr = .44). Lets both include them together and not... 
@@ -663,22 +676,25 @@ AICc(full_mod_bin);AICc(full_mod_bin2)
 Removing the interaction term reduces the AIC value, and based on the summary table doesn't significantly contrbute to predicting the presence of salmon. 
 
 ```{r}
-
+full_mod_bin3 <- glm(binomial ~ avg_density + juli_date + avg_biom_site_gm2 + year
+                     + dist_anad_km, data = dat, family = binomial(link = logit))
+summary(full_mod_bin3)
+AIC(full_mod_bin3)
 ```
 
 
 ```{r}
 # try without interaction (not significant)
-fit1.red <- glm(binomial ~ avg_density+juli_date+year, family = binomial(link = logit), data = dat)
+fit1.red <- glm(binomial ~ avg_density + juli_date + year, family = binomial(link = logit), data = dat)
 summary(fit1.red)
 
 fit1.time <- glm(binomial ~ juli_date+year, family = binomial(link = logit), data = dat[-41,])
 summary(fit1.time)
 # compare AIC values and Analysis of Deviance
-AIC(fit1, fit1.red, fit1.time) # reduced has slightly lower AIC value
-anova(fit1, fit1.red, fit1.time, test = "Chisq") # the null hypothesis is rejected indicating
+AIC(full_mod_bin3, fit1.red, fit1.time) # reduced has slightly lower AIC value
+anova(full_mod_bin3, fit1.red, fit1.time, test = "Chisq") # the null hypothesis is rejected indicating
 # that the true model is the second model that includes avg_density, juli_date, and y ear
-anova(fit1, test = "Chisq")
+anova(full_mod_bin3, test = "Chisq")
 
 # Try another fit using seagrass densities and date
 # If the seagrass and sea otter have a hypothesized relationship (based on WR work) they should 
@@ -754,7 +770,7 @@ Poisson and all salmon species modeled together
 # have to add a constant to abundance data because poisson doens't like zeros
 # this glm framework automatically transforms the data
 fit <- glm(abundance+1 ~ avg_density*year*juli_date*I(juli_date^2)*avg_biom_site_gm2*dist_anad_km, data = dat4, family = poisson)
-summary(fit)
+summary(fit) # this doesn't really seem to work
 
 # residuals vs fitted appear to show an increase in variance, check summary output
 # the normal QQ plot indicates a couple worrisome points (case numbers 16 and 25 and 9) ; however
@@ -847,6 +863,66 @@ plot_grid(a1, a1.1)
 
 
 ## Gam by species
+First we need to determine which parameters are best included in the gam model. Start with pnk salmon
+### Pink gam fitting
+```{r}
+gam.pink1 <- gam(SALPINK ~ s(juli_date, k = 4) + avg_density + year + avg_biom_site_gm2 + dist_anad_km, data = dat, family = nb(link = "log")) # didn't include intx bc already det not sig
+summary(gam.pink1)
+
+gam.pink2 <- gam(SALPINK ~ s(juli_date, k = 4) + avg_density + avg_biom_site_gm2 + dist_anad_km, data = dat, family = nb(link = "log"))
+summary(gam.pink2) # no year and no salinity (both non sig)
+
+anova(gam.pink1, gam.pink2, test = "Chisq") # okay dropping year justified
+
+# rest of the parameters significantly contribute to explaining pink catch abundances
+AICc(gam.pink1);AICc(gam.pink2)
+
+```
+Best gam model for pink salmon includes density, biomass, and dist, and date (smoothed) (gam.pink2)
+
+### Chum gam fitting
+```{r}
+gam.chum1 <- gam(SALCHUM ~ s(juli_date, k = 3) + avg_density + year + avg_biom_site_gm2 + dist_anad_km + salinity_ppt_transect, data = dat, family = nb(link = "log")) # didn't include intx bc already det not sig
+summary(gam.chum1)
+
+gam.chum2 <- gam(SALCHUM ~ s(juli_date, k = 3) + avg_density + avg_biom_site_gm2 + dist_anad_km + salinity_ppt_transect, data = dat, family = nb(link = "log")) 
+summary(gam.chum2)
+
+anova(gam.chum1, gam.chum2, test="Chisq") # year might cntribu.. at 0.1
+
+gam.chum3 <- gam(SALCHUM ~ s(juli_date, k = 3) + avg_density + avg_biom_site_gm2 + dist_anad_km + year, data = dat, family = nb(link = "log"))
+summary(gam.chum3) # can't compare w/ models with salinity bc there was one site removed bc I didn't have salinity for it. (look at n)
+
+gam.chum4 <- gam(SALCHUM ~s(juli_date, k = 3) + avg_density + avg_biom_site_gm2 + dist_anad_km, data = dat, family = nb(link = "log"))
+summary(gam.chum4)
+
+anova(gam.chum3, gam.chum4, test = "Chisq") # wo salinity year doesn't contribu
+
+gam.chum5 <- gam(SALCHUM ~s(juli_date, k = 3) + avg_biom_site_gm2 + dist_anad_km , data = dat[-38,], family = nb(link = "log"))
+summary(gam.chum5)
+
+anova(gam.chum4, gam.chum5) # important to keep sea otter density
+
+gam.chum6 <- gam(SALCHUM ~s(juli_date, k = 3) + avg_density +avg_biom_site_gm2, data = dat, family = nb(link = "log"))
+summary(gam.chum6)
+
+gam.chum7 <- gam(SALCHUM ~s(juli_date, k = 3) + avg_density, data = dat, family = nb(link = "log"))
+summary(gam.chum7)
+
+gam.chum8 <- gam(SALCHUM ~s(juli_date, k = 3) + avg_density + dist_anad_km, data = dat, family = nb(link = "log"))
+summary(gam.chum8)
+
+anova(gam.chum4, gam.chum6, test = "Chisq") # drop dist
+anova(gam.chum6, gam.chum7, test = "Chisq") # drop biom
+anova(gam.chum7, gam.chum8, test = "Chisq")
+
+AICc(gam.chum4);AICc(gam.chum6);AICc(gam.chum7);AICc(gam.chum8)
+visreg(gam.chum7)
+```
+Model that includes smoothed date, and sea otter density (gam.chum7)
+
+## Visualizing GAM by species
+### visualize coho gam 
 ```{r}
 #BY species
 gam.coho <- gam(SALCOHO ~ s(juli_date, k = 4) + avg_density + year + avg_biom_site_gm2 + dist_anad_km, data = dat, family = nb(link = "log"))
@@ -869,60 +945,79 @@ co.dist <- visreg(gam.coho, "dist_anad_km", scale = "response", gg = TRUE, parti
   theme_classic() +
   xlab(expression(paste("Distance from anadromous stream (",km^2,")"))) + 
   ylab("Coho abundance") + geom_point() +
-  coord_cartesian(ylim = c(0, 150))  
+  coord_cartesian(ylim = c(0, 150)) 
+```
+
+### visualize pink gam
+Use gam.pink2 (as of 1/19/20)
+```{r}
 # Pink salmon
-gam.pink <- gam(SALPINK ~ s(juli_date, k = 4) + avg_density + year + avg_biom_site_gm2 + dist_anad_km, data = dat, family = nb(link = "log"))
+summary(gam.pink2)
+visreg(gam.pink2)
 
-summary(gam.pink)
-visreg(gam.pink)
-
-p.so <- visreg(gam.pink, "avg_density", scale = "response", gg = TRUE, partial = TRUE) + 
-  theme_classic() +
+p.so <- visreg(gam.pink2, "avg_density", scale = "response", gg = TRUE, partial = F, rug = F) + 
+  plot_theme() +
   xlab(expression(paste("Sea otter density (#/",km^2,")"))) + 
-  ylab("Pink abundance") + geom_point() + coord_cartesian(ylim = c(0, 150))
+  ylab("Pink abundance") + coord_cartesian(ylim = c(0, 350))
 
-p.eel <- visreg(gam.pink, "avg_biom_site_gm2", scale = "response", gg = TRUE, partial = TRUE) + 
-  theme_classic() +
-  xlab(expression(paste("Eelgrass density (g/",m^2,")"))) + 
+p.eel <- visreg(gam.pink2, "avg_biom_site_gm2", scale = "response", gg = TRUE, partial = F, rug = F) + 
+  plot_theme() +
+  xlab(expression(paste("Eelgrass biomass (g/",m^2,")"))) + 
+  ylab(NULL)  +
+  coord_cartesian(ylim = c(0, 350))
+
+p.dist <- visreg(gam.pink2, "dist_anad_km", scale = "response", gg = TRUE, partial = F, rug = F) + 
+  plot_theme() +
+  xlab("Distance from anadromous stream (km)") + 
+  ylab(NULL) +
+  coord_cartesian(ylim = c(0, 350))  
+
+p.date <- visreg(gam.pink2, "juli_date", gg = TRUE, scale = "response", partial = TRUE) + 
+  plot_theme() +
+  xlab("Julian Date") + 
   ylab("Pink abundance") + geom_point() +
-  coord_cartesian(ylim = c(0, 150))
+  coord_cartesian(ylim = c(0, 350))
 
-p.dist <- visreg(gam.pink, "dist_anad_km", scale = "response", gg = TRUE, partial = TRUE) + 
-  theme_classic() +
-  xlab(NULL) + 
-  ylab("Pink abundance") + geom_point() +
-  coord_cartesian(ylim = c(0, 150))  
+plot_grid(p.so, p.eel, p.dist)
+```
 
-gam.chum <- gam(SALCHUM ~ s(juli_date, k = 4) + avg_density + year + avg_biom_site_gm2 + dist_anad_km, data = dat, family = nb(link = "log"))
+### visualize chum gam
+Use gam.chum7 (include dates and sea otter density)
+```{r}
+summary(gam.chum7)
+visreg(gam.chum7)
 
-summary(gam.chum)
-visreg(gam.chum)
-#
-ch.so <- visreg(gam.chum, "avg_density", scale = "response", gg = TRUE, partial = TRUE) + 
-  theme_classic() +
+ch.so <- visreg(gam.chum7, "avg_density", scale = "response", gg = TRUE, rug = F,partial = F) + 
+  plot_theme() +
   xlab(expression(paste("Sea otter density (#/",km^2,")"))) + 
-  ylab("Chum abundance") + geom_point() + coord_cartesian(ylim = c(0, 150))
+  ylab(NULL) + coord_cartesian(ylim = c(0, 150))
 
-ch.eel <- visreg(gam.chum, "avg_biom_site_gm2", scale = "response", gg = TRUE, partial = TRUE) + 
-  theme_classic() +
-  xlab(expression(paste("Eelgrass density (g/",m^2,")"))) + 
-  ylab("Chum abundance") + geom_point() +
-  coord_cartesian(ylim = c(0, 150))
+ch.date <- visreg(gam.chum7, "juli_date", scale = "response", gg = TRUE, rug = F) + 
+  plot_theme() +
+  xlab(expression(paste("Julian Date"))) + 
+  ylab("Chum abundance")  + coord_cartesian(ylim = c(0, 150))
 
-ch.dist <- visreg(gam.chum, "dist_anad_km", scale = "response", gg = TRUE, partial = TRUE) + 
-  theme_classic() +
-  xlab(NULL) + 
-  ylab("Chum abundance") + geom_point() +
-  coord_cartesian(ylim = c(0, 150))  
+plot_grid(ch.date, ch.so, p.so, align = "hv")
 
-plot.dist <- plot_grid(p.dist, ch.dist, co.dist, align = "hv", vjust = 0)
-save_plot("WSN_dist_19.jpg", plot.dist)
+#ch.eel <- visreg(gam.chum, "avg_biom_site_gm2", scale = "response", gg = TRUE, partial = TRUE) + 
+ # theme_classic() +
+  #xlab(expression(paste("Eelgrass density (g/",m^2,")"))) + 
+  #ylab("Chum abundance") + geom_point() +
+  #coord_cartesian(ylim = c(0, 150))
 
-plot.hab <- plot_grid(p.eel, ch.eel, co.eel, align = "hv")
-save_plot("WSN_hab_19.jpg", plot.hab)
+#ch.dist <- visreg(gam.chum, "dist_anad_km", scale = "response", gg = TRUE, partial = TRUE) +  theme_classic() +
+#  xlab(NULL) + 
+ # ylab("Chum abundance") + geom_point() +
+  #coord_cartesian(ylim = c(0, 150))  
 
-plot.otts <- plot_grid(p.so, ch.so, co.so, align = "hv")
-save_plot("WSN_otts_19.jpg", plot.otts)
+#plot.dist <- plot_grid(p.dist, ch.dist, co.dist, align = "hv", vjust = 0)
+#save_plot("WSN_dist_19.jpg", plot.dist)
+
+#plot.hab <- plot_grid(p.eel, ch.eel, co.eel, align = "hv")
+#save_plot("WSN_hab_19.jpg", plot.hab)
+
+#plot.otts <- plot_grid(p.so, ch.so, co.so, align = "hv")
+#save_plot("WSN_otts_19.jpg", plot.otts)
 ```
 
 # GLM PINK, negbin
@@ -931,34 +1026,40 @@ If we allow for quadrat data model does it make more sense to use glm by species
 fit.nb.pink <- glm.nb(SALPINK ~ year*juli_date*avg_density+
                         I(juli_date^2)*avg_biom_site_gm2*dist_anad_km, 
                       data = dat4, init.theta=0.535, control = glm.control(maxit = 100))
-summary(fit.nb.pink)
+summary(fit.nb.pink) # no intx terms are significant
 
-pink.nb2 <- glm.nb(SALPINK ~ year + juli_date + avg_density + I(juli_date^2) * dist_anad_km +
-                     avg_biom_site_gm2, 
+pink.nb2 <- glm.nb(SALPINK ~ year + juli_date + avg_density + I(juli_date^2) + dist_anad_km +
+                     avg_biom_site_gm2 + salinity_ppt_transect, 
                    data = dat4, init.theta = 0.353, control = glm.control(maxit = 100))
-summary(pink.nb2)
+summary(pink.nb2) # year isn't significant
 
-pink.nb3 <- glm.nb(SALPINK ~ year + juli_date + I(juli_date^2) + dist_anad_km + avg_density +
-                     avg_biom_site_gm2, data = dat4, init.theta = 0.469, control = glm.control(maxit = 100))
+pink.nb3 <- glm.nb(SALPINK ~ salinity_ppt_transect + juli_date + I(juli_date^2) + dist_anad_km + avg_density + avg_biom_site_gm2, data = dat4, init.theta = 0.469, control = glm.control(maxit = 100))
 summary(pink.nb3)
 
-pink.nb4 <- glm.nb(SALPINK ~ year + juli_date + I(juli_date^2) + dist_anad_km + avg_density,
-                   data = dat4, init.theta = 0.469, control = glm.control(maxit = 100))
+pink.nb4 <- glm.nb(SALPINK ~  juli_date + I(juli_date^2) + dist_anad_km + avg_density + avg_biom_site_gm2, data = dat4, init.theta = 0.469, control = glm.control(maxit = 100))
 summary(pink.nb4)
 
-pink.nb5 <- glm.nb(SALPINK ~ year + juli_date + I(juli_date^2) + avg_density,
+pink.nb5 <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_density + dist_anad_km,
                    data = dat4, init.theta = 0.469, control = glm.control(maxit = 100))
+summary(pink.nb5)
 
-anova(pink.nb3, pink.nb4, test = "Chisq")
-anova(pink.nb4, pink.nb5, test = "Chisq")
-AICc(pink.nb2);AICc(pink.nb3);AICc(pink.nb4);AICc(pink.nb5)
-AICc(pink.nb3) - AICc(pink.nb4)
+pink.nb6 <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_density + avg_biom_site_gm2,
+                   data = dat4, init.theta = 0.469, control = glm.control(maxit = 100))
+summary(pink.nb6)
 
-anova(fit.nb.pink, test = "Chisq")
-anova(fit.nb.pink, nb.pink2, test = "chisq")
+
+anova(pink.nb3, pink.nb4, test = "Chisq") #does not improve the model by having salinity 
+anova(pink.nb4, pink.nb5, test = "Chisq") # its like almost worth it to includ biom
+anova(pink.nb4, pink.nb6, test = "Chisq") # definitely sig better w/ dist_anad
+AICc(pink.nb2);AICc(pink.nb3);AICc(pink.nb4);AICc(pink.nb5);AICc(pink.nb6)
+
 par(mfrow=c(2,2))
-plot(pink.nb4, which = 1:4)
+plot(pink.nb6, which = 1:4)
+plot(pink.nb5, which = 1:4)
+
+AICc(pink.nb5);AICc(pink.nb6)
 ```
+the model that include: jd jd^2 dist_anad avg_density is the best model to predict pink salmon numbers (pink.nb5)
 
 # GLM with CHUM salmon
 ```{r}
@@ -966,39 +1067,49 @@ nb.chum <- glm.nb(SALCHUM ~ year*juli_date*avg_density+I(juli_date^2)*avg_biom_s
                   data = dat4, init.theta=0.535, control = glm.control(maxit = 100))
 summary(nb.chum)
 
-nb.chum2 <- glm.nb(SALCHUM ~ year*juli_date + avg_density + I(juli_date^2) + avg_biom_site_gm2 + dist_anad_km, 
+nb.chum2 <- glm.nb(SALCHUM ~ year*juli_date*avg_density + I(juli_date^2) + avg_biom_site_gm2 + dist_anad_km, 
                   data = dat4, init.theta=0.7, control = glm.control(maxit = 100))
 summary(nb.chum2)
 
-nb.chum3 <- glm.nb(SALCHUM ~ year + juli_date + avg_density + I(juli_date^2) + avg_biom_site_gm2 + dist_anad_km, 
-                  data = dat4, init.theta=0.7, control = glm.control(maxit = 100))
+nb.chum3 <- glm.nb(SALCHUM ~ year*avg_density+ juli_date + I(juli_date^2) + avg_biom_site_gm2 + dist_anad_km, data = dat4, init.theta=0.7, control = glm.control(maxit = 100))
 summary(nb.chum3)
 
-nb.chum4 <- glm.nb(SALCHUM ~ year + juli_date + avg_density + I(juli_date^2) + avg_biom_site_gm2, 
-                   data = dat4, init.theta=0.7, control = glm.control(maxit = 100))
+nb.chum4 <- glm.nb(SALCHUM ~ year + juli_date + avg_density + I(juli_date^2) + avg_biom_site_gm2 + dist_anad_km, data = dat4, init.theta=0.7, control = glm.control(maxit = 100))
 summary(nb.chum4)
 
-nb.chum5 <- glm.nb(SALCHUM ~ year + juli_date + avg_density + I(juli_date^2), 
-                   data = dat4, init.theta=0.7, control = glm.control(maxit = 100))
-
-
-nb.chum6 <- glm.nb(SALCHUM ~ year + juli_date + I(juli_date^2), 
-                   data = dat4, init.theta=0.7, control = glm.control(maxit = 100))
-  
+nb.chum5 <- glm.nb(SALCHUM ~ juli_date + avg_density + I(juli_date^2) + avg_biom_site_gm2 + dist_anad_km, data = dat4, init.theta=0.7, control = glm.control(maxit = 100))
 summary(nb.chum5)
 
-anova(nb.chum3, nb.chum4, test = "Chisq")
-anova(nb.chum4, nb.chum5, test = "Chisq")
-anova(nb.chum5, nb.chum6, test = "Chisq")
-anova(nb.chum3, nb.chum5, test = "Chisq")
+nb.chum6 <- glm.nb(SALCHUM ~ juli_date + I(juli_date^2) + avg_density + avg_biom_site_gm2, 
+                   data = dat4, init.theta=0.7, control = glm.control(maxit = 100))
+summary(nb.chum6)
+
+nb.chum7 <- glm.nb(SALCHUM ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + dist_anad_km, 
+                   data = dat4, init.theta=0.7, control = glm.control(maxit = 100))
+summary(nb.chum7)
+
+nb.chum8 <- glm.nb(SALCHUM ~ juli_date + I(juli_date^2) + avg_density, 
+                   data = dat4, init.theta=0.7, control = glm.control(maxit = 100))
+summary(nb.chum8)
+
+nb.chum9 <- glm.nb(SALCHUM ~ juli_date + I(juli_date^2) + avg_density + dist_anad_km, 
+                   data = dat4, init.theta=0.7, control = glm.control(maxit = 100))
+summary(nb.chum9)
+
+anova(nb.chum4, nb.chum5, test = "Chisq") # year does not sig contribute to model
+anova(nb.chum5, nb.chum6, test = "Chisq") # dist anad stream does not sig contribute
+anova(nb.chum5, nb.chum7, test = "Chisq") # avg density sorta impt?
+anova(nb.chum6, nb.chum8, test = "Chisq") # no biomass
+
 library(AICcmodavg)
-AICc(nb.chum3);AICc(nb.chum4);AICc(nb.chum5);AICc(nb.chum6)
+AICc(nb.chum3);AICc(nb.chum4);AICc(nb.chum5);AICc(nb.chum6);AICc(nb.chum7);AICc(nb.chum8)
 # Evaluation model fit
 par(mfrow=c(2,2))
-plot(nb.chum3, which = 1:4)
+plot(nb.chum8, which = 1:4)
 
-plot(nb.chum3, which = 1:4)
+plot(nb.chum6, which = 1:4)
 ```
+None of the model fits are really all that great; however, the lowest AICc value and best model based on parameter evaluation using anova chisq tests is nb.chum 8 (model that includes density, julian day julian dat ^2)
 
 # Zero inflated with COHO SALMON
 ```{r}
@@ -1028,10 +1139,10 @@ visreg(zin.coho2)
 ```
 
 ## Visualizing CHUM models
-Selected model, y = year + julian + julian2 + so_density
-nb.chum5
+Selected model, y =  julian + julian2 + so_density
+nb.chum8
 ```{r}
-visreg(nb.chum5)
+visreg(nb.chum8)
 
 chum1 <- visreg(nb.chum5, "juli_date", scale = "response", gg = TRUE, partial = TRUE, alpha = .05) + 
   theme_classic() +
@@ -1052,8 +1163,8 @@ plot.chum <- plot_grid(chum1, chum2)
 ```
 
 ## Visualizing PINK models
-Selected model, y = year + julian + julian2 + so_density
-nb.pink4
+Selected model, y = julian + julian2 + so_density + dist_anad
+nb.pink5
 ```{r}
 visreg(pink.nb4)
 
