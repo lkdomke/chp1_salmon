@@ -39,6 +39,11 @@ eel17 <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3A
 env17 <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3A5e946e41-4f5f-4499-9969-766f01113971", method = "libcurl"), stringsAsFactors = FALSE, header = TRUE)
 
 name <- read.csv("Data/site_code_names.csv", stringsAsFactors = FALSE, header = TRUE) # updated location 9/20
+
+sed17 <- read.csv("../APECS Master repository/APECS Master repo/ALL_DATA/DATA_ARCHIVING/2017/seagrass_pits_2017/seagrass_seaotter_pit_sediment_2017_CLEAN.csv",stringsAsFactors=FALSE, header = TRUE) # took from the desktop even tho its on knb BECAUSE the version on knb uses a strange site_code system that doesn't match ANYTHING ELSE WE'VE DONE. 
+
+sed19 <- read.csv("../APECS Master repository/APECS Master repo/ALL_DATA/seagrass_pits_sediment_2019_RAW.csv",
+                  stringsAsFactors=FALSE, header = TRUE)
 ```
 # Data Clean up
 ## Main data frame
@@ -164,9 +169,29 @@ dat4 <- left_join(dat3, biom_all, by = c("site", "year"))
 ```
 
 ## Qualitative sediment
-Want to be able to account for differences in sediment at seagrass sites for data exploration purposes/analysis
+Want to be able to account for differences in sediment at seagrass sites for data exploration purposes/analysis.
+In 2017, along 100 m transect every 10 m primary and secondary sediment type was qualitatively recorded. This occured outside, at the edge of, and inside the seagrass meadow. Each sediment type was given a numeric code 1 - 10. 1 being softer sediment and 10 being bedrock 
+1 - mud
+2 - sandy mud
+3 - muddy sand
+4 - sand 
+5 - coarse sand
+6 - pebble
+7 - gravel 
+8 - cobble 
+9 - boulders
+10 - bedrock
 ```{r}
+glimpse(sed17)
+# note: date column is INCORRECT. 
+glimpse(sed19)
+sed17.2 <- left_join(sed17, name, by = c("site" = "site_2017")) %>%
+  dplyr::select(c(site, YYYYMMDD, trans_type, trans_bin, trans_m, sed1_type, sed2_type, sed1_no, sed2_no, 
+                  field_collector, place_name, bay_code, bay_sample, latitude, longitude)) %>%
+  unite(site_ID, bay_code:bay_sample)
 
+test <- anti_join(sed19, name, by = c("site_name" = "place_name"))
+unique(test$site_name)
 ```
 
 Analysis has been moved to new rmarkdown file: Salmon_env_analysis_pow.Rmd

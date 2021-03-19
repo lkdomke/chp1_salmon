@@ -49,8 +49,10 @@ noaa$EventID <- as.numeric(noaa$EventID)
 
 seak_fish <- noaa %>%
   group_by(EventID) %>% # group by EventID first so that it will replicate dist for each row
-  left_join(fish, noaa[,c(3,12)], by = "EventID") %>% # join the anadromous distance (in meters) to the       fish data frame by the EventID
-  dplyr::select(SiteID, EventID, Date, Season, Mon, SeasonNoYear, Year, Gear, Temp, Salinity, NEAR_DIST, Region, Locale, Location.y, SubLocale.y, Nickname, Habitat, Lat1, Long1, SpCode, Sp_CommonName, Sp_ScientificName, Length, Unmeasured, taxon)
+  left_join(fish, noaa[,c(3,12)], by = "EventID") %>% # join the anadromous distance (in meters) to the fish data frame by the EventID
+  dplyr::select(SiteID, EventID, Date, Season, Mon, SeasonNoYear, Year, Gear, Temp, Salinity, NEAR_DIST, 
+                Region, Locale, Location.y, SubLocale.y, Nickname, Habitat, Lat1, Long1, SpCode, 
+                Sp_CommonName, Sp_ScientificName, Length, Unmeasured, taxon)
 #write this out so you can use it elsewhere
 #write.csv(seak_fish, "../ALL_DATA/Lia_fish/noaa_seine_clean_dist.csv")
 
@@ -335,7 +337,7 @@ ggplot(scrs, aes(x=NMDS1, y=NMDS2, col=Habitat)) +
   scale_color_manual(values = c("#333333", "#339900", "#D16103", "#3399FF")) +
   annotate("text", x = 0.15, y = 0.55, label = "Stress = 0.184", col = "black", hjust = 0, size = 7) 
 ```
-## ggplot of species biplot KELP EEL
+   ## ggplot of species biplot KELP EEL
 ```{r}
 scrs.sub <- scores(sp.nmds.sub, display = 'sites')
 scrs.sub <- cbind(as.data.frame(scrs.sub), Habitat = env.sc.sub1$Habitat)
@@ -361,7 +363,7 @@ ggplot(scrs.sub, aes(x=NMDS1, y=NMDS2, col=Habitat)) +
   annotate("text", x = 0.15, y = 0.55, label = "Stress = 0.181", col = "black", hjust = 0, size = 7) 
 ```
 
-#Environmental biplots
+  #Environmental biplots
 ``` {r}
 require(corrgram)
 corrgram(env.sc.sub[,c(1,2,4,8:10)])
