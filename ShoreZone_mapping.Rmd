@@ -96,7 +96,7 @@ st_length(attr_sp)
 coast_km <- sum(st_length(attr_sf))/1000
 ```
 
-Lets plot the diff maps real quick
+Lets plot the diff maps real quick - this takes a long time, don't do if we can avoid.
 ```{r}
 # high light all three lines at the same time. 
 #plot(seak_base, col = "grey")
