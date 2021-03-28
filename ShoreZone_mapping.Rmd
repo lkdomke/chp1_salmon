@@ -250,7 +250,7 @@ Eelgrass composes 14% of the coastline that was sampled and soft brown kelps com
 
 First lets look at average salmon catch in each habitat type in seso
 ```{r theme settings, include=FALSE}
-# Creates custom base plot theme that can adjust every graph that you use plot_theme for!
+# Creates custom base plot theme that can adjust every graph that you use plot_theme for! First create custom plot theme
 
 plot_theme <- function() {
   theme_bw(base_size = 48, base_family = "Avenir Black") %+replace%
