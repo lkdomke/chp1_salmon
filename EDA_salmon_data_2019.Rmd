@@ -39,6 +39,7 @@ eel17 <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3A
 env17 <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3A5e946e41-4f5f-4499-9969-766f01113971", method = "libcurl"), stringsAsFactors = FALSE, header = TRUE)
 
 name <- read.csv("Data/site_code_names.csv", stringsAsFactors = FALSE, header = TRUE) # updated location 9/20
+site_codes <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3A87744ced-530b-4bae-809e-ff1012c7ae72"), stringsAsFactors = FALSE, header = TRUE) # full site codes from 2017 on with bay_codes
 
 sed17 <- read.csv("../APECS Master repository/APECS Master repo/ALL_DATA/DATA_ARCHIVING/2017/seagrass_pits_2017/seagrass_seaotter_pit_sediment_2017_CLEAN.csv",stringsAsFactors=FALSE, header = TRUE) # took from the desktop even tho its on knb BECAUSE the version on knb uses a strange site_code system that doesn't match ANYTHING ELSE WE'VE DONE. 
 
@@ -55,10 +56,8 @@ glimpse(dat)
 # do some minor clean up 
 dat <- dat[-42,-1] # removes first column and second calder bay survey (didn't happen)
 dat$year <- as.factor(dat$year)
-dat[,25:29] <- data.frame(lapply(dat[,25:29], as.numeric), stringsAsFactors = FALSE) # make sure salmon abundance is numeric
-dat1 <- dat %>%
-  rowwise() %>%
-  mutate(abundance = sum(SALCHIN, SALCHUM, SALCOHO, SALPINK, SALSOCK))
+dat[,"SALCHIN":"SALSOCK"] <- data.frame(lapply(dat[,"SALCHIN":"SALSOCK"], as.numeric), stringsAsFactors = FALSE) # make sure salmon abundance is numeric
+dat1 <- cbind(dat, abundance = rowSums(dat[,c('SALCHIN','SALCHUM', 'SALCOHO', 'SALPINK', 'SALSOCK')]))
 
 ```
 
@@ -71,11 +70,13 @@ dist <- allsites[616:661,-c(1:2,4:6,11)] # this is the straightline distance to 
 
 dist17 <- dist %>%
   filter(habitat == "eelgrass", year == "2017")%>%
-  rename(site = site_event) 
+  mutate(site = site_event) %>%
+  dplyr::select(-site_event)
 
 dist19 <- dist %>%
   filter(habitat == "eelgrass", year == "2019")%>%
-  rename(site = site_event) 
+  mutate(site = site_event) %>%
+  dplyr::select(-site_event)
 
 names1 <- name %>%
   dplyr::select(site, site_code)
@@ -84,7 +85,7 @@ names1 <- data.frame(lapply(names1, as.character), stringsAsFactors = FALSE)
 colnames(names1) <- c("place", "site") # make sure what you are joining has the same column name
 dist17.2 <- left_join(dist17, names1, by = "site") %>% # join by site
   dplyr::select(-site) %>%  # remove site code column
-  rename(site = place) # rename site name
+  dplyr::rename(site = place) # rename site name
 
 # slight changes to names on dist19
 levels(as.factor(dist19$site))
@@ -118,7 +119,7 @@ biom_site <- biom %>%
   mutate(flowering_biomass_gm2 = (avg_biomass * flowering_m2)) %>%
   mutate(total_biomass_gm2 = (flowering_biomass_gm2 + shoot_biomass_gm2)) %>%
   group_by(site) %>%
-  summarise(avg_biom_site_gm2 = mean(total_biomass_gm2)) %>%
+  dplyr::summarise(avg_biom_site_gm2 = mean(total_biomass_gm2)) %>%
   mutate(year = "2019")
 
 # 2017
@@ -127,7 +128,7 @@ str(eel17)
 biom17 <- eel17 %>%
   mutate(shoot_dw = shoot_foil_dw - shoot_foil, na.rm = T) %>%
   group_by(site, quadrat) %>%
-  summarise(avg_shoot_dw = mean(shoot_dw))
+  dplyr::summarise(avg_shoot_dw = mean(shoot_dw))
 
 
 eel_hab17 <- env17 %>%
@@ -144,7 +145,7 @@ df <- left_join(eel_hab17, biom17) %>%
   mutate(total_shoot_m2 = (eelgrass_shoots_msq + flowering_shoots_msq)) %>%
   mutate(total_biomass_gm2 = total_shoot_m2 * avg_shoot_dw, na.rm = T) %>%
   group_by(site) %>%
-  summarise(avg_biom_site_gm2 = mean(total_biomass_gm2, na.rm = T))
+  dplyr::summarise(avg_biom_site_gm2 = mean(total_biomass_gm2, na.rm = T))
 
 # change site names in 2017 for df 
 names1 <- name %>%
@@ -156,7 +157,7 @@ df2 <- left_join(df, names1, by = "site") # join by site
 
 df3 <- df2 %>%
   dplyr::select(-site) %>%  # remove site code column
-  rename(site = place) %>% # rename site name
+  dplyr::rename(site = place) %>% # rename site name
   mutate(year = "2017")
 
 # Combine 2017 and 2019 biomass, with e/ other and then the main df (dat)
@@ -185,13 +186,123 @@ In 2017, along 100 m transect every 10 m primary and secondary sediment type was
 glimpse(sed17)
 # note: date column is INCORRECT. 
 glimpse(sed19)
-sed17.2 <- left_join(sed17, name, by = c("site" = "site_2017")) %>%
+
+# combine sed17 w/ site_codes and then reduce
+sed17.2 <- left_join(sed17, site_codes, by = c("site" = "site_2017")) %>%
   dplyr::select(c(site, YYYYMMDD, trans_type, trans_bin, trans_m, sed1_type, sed2_type, sed1_no, sed2_no, 
                   field_collector, place_name, bay_code, bay_sample, latitude, longitude)) %>%
   unite(site_ID, bay_code:bay_sample)
 
-test <- anti_join(sed19, name, by = c("site_name" = "place_name"))
-unique(test$site_name)
+
+
+require(plyr)
+sed19$site_name <- mapvalues(sed19$site_name, from = c("Baker Island", "Chusini Cove", "Farallon Bay", 
+                                                        "Guktu Cove", "Hecta Bay - eel", "Kaguk", 
+                                                       "Klawock Airport", "Naukati ", "Nossuk Bay ",
+                                    "S Wadleigh Island","Shakan Bay  - eel", "Shakan Bay - kelp"), 
+          to = c("Baker Island - eel", "Chusini-Kladein Flat", "Farallon", "Guktu", "Heceta", "Kaguk ",
+                 "Klawock airport", "Naukati", "Nossuk Bay", "South Wadleigh", "Shakan - eel", "Shakan - kelp"))
+
+# combine sed19 w/ site_codes and then reduce to what I need
+sed19.2 <- left_join(sed19, site_codes, by = c("site_name" = "site_2019")) %>%
+  dplyr::select(c(site_name, date_yyyy.mm.dd, trans_loc, bin_no, bin_area_m2, 
+                  sed1_type, sed2_type, sed1_no, sed2_no, 
+                  field_collector, place_name, bay_code, bay_sample, latitude, longitude)) %>%
+  unite(site_ID, bay_code:bay_sample)
+  
+names(sed19.2)[names(sed19.2) == "date_yyyy.mm.dd"] <- "YYYYMMDD"
+names(sed19.2)[names(sed19.2) == "trans_loc"] <- "trans_type"
+names(sed19.2)[names(sed19.2) == "bin_no"] <- "trans_bin"
+names(sed19.2)[names(sed19.2) == "bin_area_m2"] <- "trans_m"
+names(sed19.2)[names(sed19.2) == "site_name"] <- "site"
+
+sed <- full_join(sed17.2, sed19.2)
+
+# Right now, there are different site IDs for slightly different areas within the same bed but different areas but for ease of analysis lets combine them because they're functionally the same location. 
+#sed$site_ID <- as.factor(sed$site_ID)
+#levels(sed$site_ID)[levels(sed$site_ID)=="CHUS_B"] <- "CHUS_A"
+#levels(sed$site_ID)[levels(sed$site_ID)=="KAGK_B"] <- "KAGK_A"
+#levels(sed$site_ID)[levels(sed$site_ID)=="NATZ_C"] <- "NATZ_A"
+#levels(sed$site_ID)[levels(sed$site_ID)=="NOSK_E"] <- "NOSK_A"
+#levels(sed$site_ID)[levels(sed$site_ID)=="SWAD_B"] <- "SWAD_A"
+#sed$site_ID <- as.character(sed$site_ID)
+
+sed$trans_type <- trimws(sed$trans_type, which = "both")
+
+sed$trans_type <- as.factor(sed$trans_type)
+levels(sed$trans_type)[levels(sed$trans_type)=="inside"] <- "Inside"
+levels(sed$trans_type)[levels(sed$trans_type)=="outside"] <- "Outside"
+sed$trans_type <- as.character(sed$trans_type)
 ```
+
+Some brief looking at sediment across sites
+```{r}
+library(ggplot2)
+sed %>%
+  group_by(site_ID, trans_type, longitude) %>%
+  dplyr::summarise(avg = mean(sed2_no)) %>%
+  filter(trans_type == "Inside") %>%
+  ungroup() %>%
+  ggplot() +
+  geom_point(aes(x = reorder(site_ID, -longitude), y = avg))
+```
+
+Combine with other data above (dat4)
+```{r}
+require(lubridate)
+# remove Shakan Bay site cause it was a kelp site and rn we're only interested in eelgrass
+sed_eel <- sed %>%
+  filter(place_name != "Shakan Bay") %>%
+  group_by(site, trans_type, place_name, site_ID, YYYYMMDD) %>%
+  dplyr::summarise(sed1_avg = mean(sed1_no), sed2_avg = mean(sed2_no), sed1_sd = sd(sed1_no), sed2_sd = sd(sed2_no)) %>%
+  mutate(YYYYMMDD = ymd(YYYYMMDD)) %>% # make sure yyyymmdd is a date column
+  mutate(year = year(YYYYMMDD)) # add in year so you can join by site id and year
+
+
+# create a dataframe with what didn't combine correctly
+sites <- c("Blanquizal Point", "Garcia Bay", 
+           "Hetta Cove", "Trocadero Bay", "Soda Bay")
+bay_code <- c("BLAQ", "GARC", "HETA", "TROC", "SODA")
+bay_sample <- c("A", "A", "A", "A", "A")
+joiner <- data.frame(sites, bay_code, bay_sample)
+
+# left_join joiner w/ original site_codes data frame to get the right lat/long etc
+j2 <- left_join(joiner, site_codes) %>%
+  dplyr::select(sites, bay_code, bay_sample, habitat, latitude, longitude, place_name)
+
+# do some double joining cause site names are being super weird
+dat5 <- dat4 %>% 
+  left_join(name, by = c("site" = "site")) %>%
+  dplyr::select(-c(habitat, latitude, longitude)) %>%
+  left_join(site_codes, by = c("names_2019" = "site_2019")) %>%
+  dplyr::select(-c(study, freshwater, sediment_description, general_description, siteID_NOAA, site_2018, site_2017, names_2019, site_code)) %>%
+  dplyr::select(site, bay_code, bay_sample, place_name, year, n_surv1:longitude)
+
+# hard code in site info for columns that don't have it (5 sites from above)
+dat5[c(7,8,14,19,20),"place_name"] <- sites
+dat5[c(7,8,14,19,20),"bay_code"] <- bay_code
+dat5[c(7,8,14,19,20),"bay_sample"] <- bay_sample
+dat5[c(7,8,14,19,20),"habitat"] <- "eelgrass"
+dat5[c(7,8,14,19,20),"latitude"] <- j2$latitude
+dat5[c(7,8,14,19,20),"longitude"] <- j2$longitude
+
+# the 2017 bay_samples also got messed up (defaulted to the 2019 ones) so need to 
+# change those: swad, kagk, chus, nosk, natz should all be bay sample "A"
+dat5[c(2:4, 11, 17), "bay_sample"] <- "A"
+
+#Okay finally add in sediment info
+
+dat6 <- dat5 %>%
+  unite(site_ID, bay_code:bay_sample) %>%
+  mutate(date = mdy(date)) %>%
+  mutate(year = year(date)) %>%
+  left_join(sed_eel, by = c("site_ID", "year")) %>%
+  mutate(site = site.x, YYYYMMDD_sed = YYYYMMDD) %>%
+  dplyr::select(-c(site.x, place_name.y, site.y, place_name.x, site.y, YYYYMMDD)) %>%
+  dplyr::select(site, site_ID, YYYYMMDD_sed, n_surv1:avg_biom_site_gm2, habitat:longitude, trans_type, sed1_avg:sed2_sd) 
+
+#write.csv(dat6, "Data/sal+env+sed_4.13.21.csv")
+```
+
 
 Analysis has been moved to new rmarkdown file: Salmon_env_analysis_pow.Rmd
