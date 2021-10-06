@@ -93,6 +93,9 @@ dat_in <- dat6 %>%
 
  corrgram(dat_in[,c(9,16,19,20,21,26:34,39,40)], lower.panel= panel.shade,
           upper.panel=panel.cor, diag.panel=panel.density)
+ 
+ corrgram(dat_in[,c(10,27,29,31,35,40)], lower.panel= panel.shade,
+          upper.panel=panel.cor, diag.panel=panel.density, labels = c("sea otter density", "julian date", "chum salmon", "pink salmon","seagrass biomass", "primary sediment"), cex = 2)
 # also looked at edge and outside, correlation (0.55) between julian day and outside sed2 avg
 ```
 
