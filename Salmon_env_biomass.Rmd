@@ -1,0 +1,346 @@
+---
+title: "Salmon_env_biomass"
+author: "Lia Domke"
+date: "11/9/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This analysis is for the bulk of chapter 1, specifically **objective 1**
+
+1) Investigate variability in commercially important fish, specifically chum (O. keta) and pink (O. gorbuscha) abundance and *biomass* in the nearshore ecosystem and their potential environmental drivers. 
+
+I had three hypothesis I was interested in testing. 
+
+H1: Eelgrass canopy height and density will increase with sea otter density and Julian day but will not vary between years. (This analysis was done in salmon_env_analysis_pow)
+
+H2: *Salmonid catch* by species is influenced by: (This analysis was done in salmon_env_analysis_pow)
+- eelgrass biomass, density, and/or canopy height, 
+- distance from anadromous stream, time of year (Julian day), 
+- temperature, 
+- sea otter density, salinity, and 
+- qualitative sediment. 
+Salmon catch will increase with eelgrass complexity, salinity and sea otter density. It will decrease with distance from anadromous stream, temperature, and julian day. There will not be a relationship between qualitative sediment and salmon abundance (Table 4 in outline). 
+
+H3: *Salmonid biomass* by species (chum and pink salmon) is influenced by:
+- eelgrass biomass, 
+- distance from anadromous stream, 
+- time of year (Julian day), temperature, 
+- sea otter density, 
+- salinity, and 
+- sediment type. 
+Salmon biomass will increase with eelgrass complexity, salinity and sea otter density. It will decrease with distance from anadromous stream, temperature, and julian day. There will not be a relationship between qualitative sediment and salmon biomass
+
+Libraries
+```{r}
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+
+```
+
+Data input
+```{r}
+sal_seine <- read.csv("Data/sal+env+sed_4.13.21.csv", stringsAsFactors = FALSE, header = TRUE) # Salmon w/ sed info - no biomass info
+
+seine17 <- read.csv("../APECS_DM/Data/Fish_Seine/fish_mass_2017_derived.csv") 
+seine19 <- read.csv("../APECS_DM/Data/Fish_Seine/fish_mass_2019_derived.csv")
+
+```
+
+```{r}
+# get an idea of data structure
+glimpse(sal_seine)
+glimpse(seine17)
+glimpse(seine19)
+```
+
+# clean and combine data
+```{r}
+seine <- bind_rows(seine17, seine19)
+
+sal <- seine %>%
+  filter(taxon == "Vertebrata") %>%
+  filter(habitat == "eelgrass") %>%
+  filter(sp_code == "SALCHIN" | sp_code == "SALCHUM" | sp_code == "SALCOHO" | sp_code == "SALPINK" |
+           sp_code == "SALSOCK") %>%
+  unite(site_ID, bay_code:bay_sample)
+
+# extract site level info as the explanatory variables
+site.var.1719 <- unique(sal_seine[,c("site_ID","dens_surv1", "dens_surv2", "avg_density", 
+                                     "sd_density", "dissolved_02_mg.l_surface",
+                                     "dissolved_02_percent_surface",
+                                "specific_conductivity_surface", "salinity_ppt_surface",
+                                "temperature_C_surface", "avg_shoot", "sd_shoot",
+                                "avg_flowering", "sd_flowering", "dist_anad_km", 
+                                "avg_biom_site_gm2", "trans_type", "sed1_avg", 
+                                "sed2_avg", "sed1_sd", "sed2_sd", "year")])
+
+sal.all <- left_join(sal, site.var.1719) # has the fork length and mass by species and the explanatory variables
+
+# site variables w/ only inside sed transect type
+sal_seine_sedinside <- sal_seine %>%
+  filter(trans_type == "Inside") %>%
+  distinct()
+
+# extract relevant site info
+site.var.bysite <- unique(sal_seine_sedinside[,c("site_ID","dens_surv1", "dens_surv2", "avg_density", 
+                                     "sd_density", "dissolved_02_mg.l_surface",
+                                     "dissolved_02_percent_surface",
+                                "specific_conductivity_surface", "salinity_ppt_surface",
+                                "temperature_C_surface", "avg_shoot", "sd_shoot",
+                                "avg_flowering", "sd_flowering", "dist_anad_km", 
+                                "avg_biom_site_gm2", "trans_type", "sed1_avg", 
+                                "sed2_avg", "sed1_sd", "sed2_sd", "year")])
+```
+
+
+# Data exploration
+```{r}
+hist(sal.all$fork_length) # left skew
+hist(sal.all$mass_g) # left skew
+
+# by species
+pink <- sal.all %>%
+  filter(sp_code == "SALPINK")
+
+hist(pink$fork_length) # closer to normal
+hist(pink$mass_g) # left skew, lots of less heavy fish
+mean(pink$mass_g)
+
+# by chum
+chum <- sal.all %>%
+  filter(sp_code == "SALCHUM")
+
+hist(chum$fork_length)
+hist(chum$mass_g) # left skew
+mean(chum$mass_g)
+
+# for funsies let's look at coho (lower ##s)
+coho <- sal.all %>%
+  filter(sp_code == "SALCOHO")
+
+hist(coho$fork_length) # damn near normal
+hist(coho$mass_g)
+mean(coho$mass_g)
+
+# bar graphs by site?
+ggplot(sal.all, aes(x = as.factor(site_ID), y = fork_length, fill = sp_code)) + 
+  geom_bar(stat = "identity")
+
+ggplot(pink, aes(x = as.factor(site_ID), y = mass_g, fill = as.factor(year))) + 
+  geom_bar(stat = "identity")
+
+ggplot(chum, aes(x = as.factor(site_ID), y = mass_g, fill = as.factor(year))) + 
+  geom_bar(stat = "identity")
+
+ggplot(coho, aes(x = as.factor(site_ID), y = mass_g, fill = as.factor(year))) + 
+  geom_bar(stat = "identity")
+
+# bar graph by species? 
+ggplot(sal.all, aes(x = sp_code, y = mass_g, fill = as.factor(site_ID))) +
+  geom_bar(stat = "identity")
+```
+
+Need to remove the sed types for only *within* the bed because thats what would effect the seagrass? 
+```{r}
+corrgram(sal.all2)
+
+sal.all2 <- sal.all %>%
+  filter(trans_type == "Inside") %>%
+  distinct()
+
+corrgram(sal.all2[,c(1,11,12,13,14,22,24,27,28,29,31,33,34,36,37)], lower.panel= panel.shade,
+          upper.panel=panel.cor, diag.panel=panel.density)
+
+```
+
+For pink salmon (right now) - want to include the 0s at sites where we seined and didn't catch any pink salmon. 
+```{r}
+pink2 <- pink %>% # only looking at average sed w/in the bed
+  filter(trans_type == "Inside") %>% # also allows us to use a lm
+  distinct() %>%
+  group_by(site_ID, julian, year) %>% # sum up total pink mass/site
+  dplyr::summarise(total_mass_g = sum(mass_g))
+# pink2 has mass for 16 sites (meaning the others have 0 pink mass)
+# Those 0s are important
+pink.site <- left_join(site.var.bysite, pink2) 
+
+#somehow lots julian date of seine, add back in
+seine_site_info <- seine %>%
+  filter(habitat == "eelgrass") %>% 
+  unite(site_ID, bay_code:bay_sample) %>% 
+  dplyr::select(site_ID, year, julian) %>%
+  distinct()
+  
+pink3 <- pink.site %>%
+  dplyr::select(-julian)%>%
+  left_join(seine_site_info, by = c("site_ID", "year")) %>%
+  mutate(total_mass_g = replace_na(total_mass_g, 0))
+
+# add in a binomial column
+pink3$binomial <- as.numeric(ifelse(pink3$total_mass_g > 0, 1, 0))
+```
+
+
+
+# More exploration plots w/ explanatory variables
+```{r}
+# use pink3 has 0s where we didn't catch pink salmon
+# start with pink salmon, basic linear model w/ additive param
+x <- sort(pink3$total_mass_g)
+qqnorm(x)
+qqline(x)
+
+qqnorm(log(x+1))
+qqline(log(x+1))
+
+hist(x)
+hist(log(x+1))
+hist(sqrt(x))
+hist((x^(1/4)))
+
+boxplot(total_mass_g ~ site_ID, data = pink3)
+plot(avg_biom_site_gm2 ~ sed1_avg, data = pink3)
+
+
+# look at just the binomial 
+plot(binomial ~ julian, data = pink3)
+plot(binomial ~ avg_biom_site_gm2, data = pink3)
+plot(binomial ~ avg_density, data = pink3)
+plot(binomial ~ dist_anad_km, data = pink3)
+
+table(pink3$total_mass_g)
+table(pink3$binomial) #25 sites are 0 and 16 are positive
+
+
+```
+
+The response variable of these data are non-negative, non-integer, zero inflated, continuous data. So when approaching what type of distribution family I should use immediately guassian is out, negative binomial also doesn't do work with 
+non-integer data. 
+
+I'm interested in using a zero inflated model either: zero inflated or hurdle model. 
+Hurdle models are a two part model that models the binary response and then a positive value model that are multipled together. Hurdle models are good when you only have structural zeros (some process is preventing detection, something is there but you failed to detect it).
+
+Zero-inflated are mixture model that includes zeros as a result of sampling and structural zeros. 
+
+Based on this information, I'd like to try a hurdle model with Gamma distributions (based on this https://biol609.github.io/lectures/13_zinfl.html and this link https://seananderson.ca/2014/05/18/gamma-hurdle/) are "maximum entropy distribution for data from 0 to infinity where the variance increases with the mean". Member of the exponential family. The hurdle model is when you fit the non-zero data and then the zero data (binomial)
+
+Remember our hypothesis: 
+H3: *Salmonid biomass* by species (chum and pink salmon) is influenced by:
+- eelgrass biomass, 
+- distance from anadromous stream, 
+- time of year (Julian day), temperature, (often co-vary)
+- sea otter density, 
+- salinity, and 
+- sediment type. 
+
+First how do I know its zero inflated
+```{r}
+# looking at reponse distribution
+plot(density(pink3$total_mass_g))
+# lots of zero present
+
+# looking at just 0s and 1s
+plot(density(pink3$binomial))
+```
+
+Also check out the scatter plots of the response against the explanatory variables (from the hypothesis)
+```{r}
+plot(total_mass_g ~ avg_biom_site_gm2, data = pink3)
+plot(total_mass_g ~ julian, data = pink3)
+plot(total_mass_g ~ sed1_avg, data = pink3)
+plot(total_mass_g ~ sed2_avg, data = pink3)
+plot(total_mass_g ~ avg_density, data = pink3)
+plot(total_mass_g ~ dist_anad_km, data = pink3)
+plot(total_mass_g ~ salinity_ppt_surface, data = pink3)
+plot(total_mass_g ~ temperature_C_surface, data = pink3)
+```
+
+First thing you need to do is fit a logistic regression to predict the probability of non-zero value and then second fit a Gamma GLM with a log link to predict the mean of the non-zero data. 
+One benefit of fitting a hurdle model with the second model being a gamma distribution is that the gamma distribution is designed for non-zero data (i.e. it doesn't account for zeros in the distribution unlike poisson or negative binomial). 
+
+```{r}
+# These models are based on the intercept only, doesn't include julian day or other parameters. 
+# logistic regression model
+m1 <- glm(binomial ~ 1, data = pink3, family = binomial(link = logit))
+
+# Gamma GLM
+m2 <- glm(total_mass_g ~ 1, data = subset(pink3, binomial == 1), family = Gamma(link = log))
+
+summary(m1)
+summary(m2)
+
+# extract the coefficients
+binom_coef <- plogis(coef(m1)[[1]]) # because is logit linked needs to be reversed
+gamma_coef <- exp(coef(m2)[[1]]) # because this is log link needs to be exponentiates
+
+# extract the confidence intervals for each mdoel
+(plogis(confint(m1)))
+(exp(confint(m2)))
+```
+
+Predictions based on the intercept model
+```{r}
+pred1 <- predict(m1, se = TRUE, type = "link")
+pred2 <- predict(m2, se = TRUE, type = "link")
+```
+
+Can plot the data and predictions
+```{r}
+# first the binomial model
+ggplot(pink3, aes(site_ID, binomial)) + geom_point() +
+  geom_hline(yintercept = plogis(pred1$fit)) +
+  geom_hline(yintercept = plogis(pred1$fit +
+      c(1.96, -1.96) * pred1$se.fit),colour = "darkgrey")
+
+ggplot(subset(pink3, binomial == 1),
+  aes(site_ID, total_mass_g)) + geom_point() +
+  geom_hline(yintercept = exp(pred2$fit)) +
+  geom_hline(yintercept = exp(pred2$fit +
+      c(1.96, -1.96) * pred2$se.fit),colour = "darkgrey")
+
+# check predictions by incorporating both the binomial and gamma model - take two means add them on a log-scale and re-exponentiate them. 
+
+pred <- exp(log(binom_coef) + log(gamma_coef))
+
+ggplot(pink3, aes(site_ID, total_mass_g, color = as.factor(binomial))) +
+  geom_point() +
+  geom_hline(yintercept = pred)
+
+# Okay but none of this uses more than the intercept for the models. How does this process change when you incorporate multiple parameters in the explanatory. 
+```
+
+
+Lets look at plots of the response against all the explanatory
+```{r}
+plot(total_mass_g ~ avg_density + avg_biom_site_gm2 + dist_anad_km + julian + salinity_ppt_surface 
+     + year + sed1_avg + sed2_avg + temperature_C_surface, data = pink3)
+
+# temperature and julian day still look like proxies for each other. 
+```
+
+Try fitting using glms
+```{r}
+# Fit full models for each one
+hurdle_gamma <- glm(total_mass_g ~ avg_density + avg_biom_site_gm2 + dist_anad_km + julian +
+                      I(julian^2) + salinity_ppt_surface + year + sed1_avg + sed2_avg +
+                      temperature_C_surface, 
+                       data = subset(pink3, total_mass_g > 0,
+                       family = Gamma(link = "log")))
+
+hurdle_binomial <- glm(binomial ~ avg_density + avg_biom_site_gm2 + dist_anad_km + julian +
+                      I(julian^2) + salinity_ppt_surface + year + sed1_avg + sed2_avg +
+                      temperature_C_surface, 
+                      data = pink3,
+                      family = binomial)
+
+
+```
+
+

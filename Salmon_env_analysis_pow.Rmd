@@ -7,7 +7,7 @@ editor_options:
   chunk_output_type: console
 ---
 
-This analysis is for the bulk of chapter 1, specifically **objective 1**
+This analysis is for the bulk of chapter 1, specifically **objective 2**
 
 1) Investigate variability in commercially important fish, specifically chum (O. keta) and pink (O. gorbuscha) abundance and biomass in the nearshore ecosystem and their potential environmental drivers. 
 
@@ -73,6 +73,51 @@ plot_theme <- function() {
 
 # to use ggsave and export plots include argument 'device=cario_pdf' e.g.: 
 # ggsave("name.pdf", device=cairo_pdf, width = 6, height = 6)
+```
+
+# global label fxn
+```{r adding global label}
+add_global_label <- function(pwobj, Xlab = NULL, Ylab = NULL, Xgap = 0.03, Ygap = 0.03, ...) {
+    ylabgrob <- patchwork::plot_spacer()
+    if (!is.null(Ylab)) {
+        ylabgrob <- ggplot() +
+            geom_text(aes(x = .5, y = .5), label = Ylab, angle = 90, ...) +
+            theme_void()
+    }
+    if (!is.null(Xlab)) {
+        xlabgrob <- ggplot() +
+            geom_text(aes(x = .5, y = .5), label = Xlab, ...) +
+            theme_void()
+    }
+    if (!is.null(Ylab) & is.null(Xlab)) {
+        return((ylabgrob + patchworkGrob(pwobj)) + 
+            patchwork::plot_layout(widths = 100 * c(Ygap, 1 - Ygap)))
+    }
+    if (is.null(Ylab) & !is.null(Xlab)) {
+        return((ylabgrob + pwobj) + 
+            (xlabgrob) +
+            patchwork::plot_layout(heights = 100 * c(1 - Xgap, Xgap),
+                                   widths = c(0, 100),
+                                   design = "
+                                   AB
+                                   CC
+                                   "
+            ))
+    }
+    if (!is.null(Ylab) & !is.null(Xlab)) {
+        return((ylabgrob + pwobj) + 
+            (xlabgrob) +
+            patchwork::plot_layout(heights = 100 * c(1 - Xgap, Xgap),
+                                   widths = 100 * c(Ygap, 1 - Ygap),
+                                   design = "
+                                   AB
+                                   CC
+                                   "
+            ))
+    }
+    return(pwobj)
+}
+
 ```
 
 # Exploratory Analaysis (EDA)
@@ -678,8 +723,7 @@ Lets start by including potentially important parameters. We know that julian da
 
 Full model w/ intx
 ```{r}
-full_mod_bin <- glm(binomial ~ avg_density + juli_date * year * avg_biom_site_gm2 + sed1_avg + salinity_ppt_transect + dist_anad_km, data = dat, 
-                    family = binomial(link = logit))
+full_mod_bin <- glm(binomial ~ avg_density + juli_date * year * avg_biom_site_gm2 + sed1_avg + salinity_ppt_transect + dist_anad_km, data = dat, family = binomial(link = logit))
 
 summary(full_mod_bin)
 par(mfrow=c(2,2))
@@ -1303,6 +1347,13 @@ pink.intx <- glm.nb(SALPINK ~ year * sed1_avg * avg_biom_site_gm2 * juli_date +
                     control=glm.control(maxit = 100), init.theta = 0.495)
 
 summary(pink.intx)
+
+# refit the model dropping two potentially influential outliers (16 and 37 - SFE and SLB)
+pink.intx.red <- glm.nb(SALPINK ~ year * sed1_avg * avg_biom_site_gm2 * juli_date + 
+                      I(juli_date^2)+ avg_density + dist_anad_km, data = fish[-c(16, 37)],
+                    control=glm.control(maxit = 100), init.theta = 0.495)
+
+summary(pink.intx.red)
 ```
 
 Interaction doesn't appear to be significant, remove intx and then create full model 
@@ -1312,12 +1363,23 @@ pink.full.mod <- glm.nb(SALPINK ~ year + juli_date + I(juli_date^2) + avg_biom_s
 
 summary(pink.full.mod)
 
+# refit w.o pot outliers
+pink.full.mod.red <- glm.nb(SALPINK ~ year + juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km + sed1_avg, data = fish[-c(16, 37)], control=glm.control(maxit = 100), init.theta = 0.495)
+
+summary(pink.full.mod.red)
+
 # remove a couple of the non significant parameters i.e. in this case year
 pink.mod1 <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km + sed1_avg, data = fish, control=glm.control(maxit = 100), init.theta = 0.495)
 
 summary(pink.mod1)
 anova(pink.full.mod, pink.mod1, test = "Chisq")
 # the addition of year does not significantly contribute to the full model. 
+
+# refit w/o pot outliers
+pink.mod1.red <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km + sed1_avg, data = fish[-c(16,37)], control=glm.control(maxit = 100), init.theta = 0.495)
+
+summary(pink.mod1.red)
+anova(pink.full.mod.red, pink.mod1.red, test = "Chisq") # pref for reduced model 
 
 # lets also drop sed1_avg and maybe instead include sed2_avg (dont include together cause their highly correlated -- makes sense)
 # first drop sed1
@@ -1330,14 +1392,40 @@ pink.mod2.2 <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 +
 anova(pink.mod2, pink.mod2.2) # just checking to make sure that they should be included. 
 summary(pink.mod2.2)
 
+########### outlier removal
+# first drop sed1
+pink.mod2.red <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km, 
+                        data = fish[-c(16,37)], control=glm.control(maxit = 100), init.theta = 0.495)
+
+summary(pink.mod2.red)
+
+pink.mod2.2.red <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + dist_anad_km, data = fish[-c(16,37)], control=glm.control(maxit = 100), init.theta = 0.495)
+summary(pink.mod2.2.red)
+
+anova(pink.mod2, pink.mod2.2) # just checking to make sure that they should be included. 
+###############
+
 # add sed 2 and compare with pink.mod2 jic
 pink.mod3 <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km + sed2_avg, data = fish, control=glm.control(maxit = 100), init.theta = 0.495)
 
 summary(pink.mod3)
 anova(pink.mod2, pink.mod3) # sed2 does not sig contribute to the model
 
-AICc(pink.intx);AICc(pink.full.mod);AICc(pink.mod1);AICc(pink.mod2);AICc(pink.mod3)
+########## does sed 2 get included in the outlier model 
+pink.mod3.red <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km + sed2_avg, 
+                        data = fish[-c(16,37)], control=glm.control(maxit = 100), init.theta = 0.495)
 
+summary(pink.mod3.red)
+anova(pink.mod2.red, pink.mod3.red) # sed2 does not sig contribute to the model
+##############
+
+AICc(pink.intx);AICc(pink.full.mod);AICc(pink.mod1);AICc(pink.mod2);AICc(pink.mod3)
+AICc(pink.intx.red);AICc(pink.full.mod.red);AICc(pink.mod1.red);AICc(pink.mod2.red);AICc(pink.mod3.red)
+
+```
+
+
+```{r}
 # lowest AICc value is pink.mod2 -- model that includes date, avg biom, avg so density, and distance. 
 par(mfrow=c(2,3))
 visreg(pink.mod2, scale = "response")
@@ -1368,11 +1456,11 @@ cand.models[[3]] <- pink.mod1
 cand.models[[4]] <- pink.mod2
 cand.models[[5]] <- pink.mod2.2
 cand.models[[6]] <- pink.mod3
-cand.models[[7]] <- pink.mod2.red
+#cand.models[[7]] <- pink.mod2.red # this model has the same parameters as pink.mod2 but it also drops a few sites that are potentially influential case numbers. 
 
 
 # create vector with "model names" in this case, I'm including the formulas from each model (so I know whats in each one!)
-Modnames <- paste (c(formula(pink.full.mod), formula(pink.intx), formula(pink.mod1), formula(pink.mod2), formula(pink.mod2.2), formula(pink.mod3), formula(pink.mod2.red)))
+Modnames <- paste (c(formula(pink.full.mod), formula(pink.intx), formula(pink.mod1), formula(pink.mod2), formula(pink.mod2.2), formula(pink.mod3)))
 
 # calculate AICc, delta AICc, and AICcw using candidate models above each named
 pink.cand.tbl <- aictab(cand.set = cand.models, modnames = Modnames, sort = TRUE)
@@ -1385,7 +1473,7 @@ colnames(pink.cand.tbl)[2] <- ("df") # rename column 2 (K) as df
 
 pink.cand.tbl
 
-write.csv(pink.cand.tbl, file = "Data/Pink_candidate_mod_tbl.csv")
+#write.csv(pink.cand.tbl, file = "Data/Pink_candidate_mod_tbl.csv")
 
 # Chi square test of full model (w/o intx) and best fitted model, reported in proposal results 
 anova(pink.full.mod, pink.mod2, test="Chisq")
@@ -1401,16 +1489,18 @@ visreg(pink.mod2, scale = "response")
 # create final pink plots
 pink1 <- visreg(pink.mod2, "juli_date", 
        scale = "response", gg = TRUE, rug = F, partial = F,line.par = list(col = 'black')) + 
-  xlab(expression(paste("Julian Day"))) + 
-  ylab("Pink Salmon") + coord_cartesian(ylim = c(0,300)) +
-    geom_point(data = fish, aes(x = juli_date, y = SALPINK)) + 
+  xlab(expression(paste("Day of year"))) + 
+  ylab(NULL) +
+  coord_cartesian(ylim = c(0,300)) +
+  geom_point(data = fish, aes(x = juli_date, y = SALPINK)) + 
   plot_theme()
 pink1
 
 pink2 <- visreg(pink.mod2, "avg_density", 
                 scale = "response", gg = TRUE, rug = F, line.par = list(col = "black")) +
   xlab(expression(paste("Sea otter density (#/",km^2,")"))) + 
-  ylab("Pink Salmon") + coord_cartesian(ylim = c(0,300)) +
+  ylab(NULL) +
+  coord_cartesian(ylim = c(0,300)) +
     geom_point(data = fish, aes(x = avg_density, y = SALPINK)) + 
   plot_theme()
 pink2  
@@ -1431,9 +1521,15 @@ pink4 <- visreg(pink.mod2, "dist_anad_km",
   plot_theme()
 pink4
 
-plot_grid(pink1, pink3, pink2, pink4, 
-          ncol = 2, nrow = 2)
+pinks <- (pink1 + pink2) /
+  (pink3 + pink4) + plot_annotation(tag_levels = "a")
+
+pink.plot <- add_global_label(pinks, Ylab = "Average Pink Salmon (#/seine)",
+                 size = 8.25)
+pink.plot
 summary(pink.mod2)
+
+tab_model(pink.mod2)
 ```
 
 
@@ -1576,7 +1672,7 @@ colnames(chum.cand.tbl)[2] <- ("df") # rename column 2 (K) as df
 
 chum.cand.tbl
 
-write.csv(chum.cand.tbl, file = "Data/Chum_candidate_mod_tbl.csv")
+#write.csv(chum.cand.tbl, file = "Data/Chum_candidate_mod_tbl.csv")
 
 # Chi square test of full model (w/o intx) and best fitted model, reported in proposal results 
 anova(chum.full.mod, chum.mod5, test="Chisq")
@@ -1650,8 +1746,8 @@ plot_grid(chum_jd, chum_jd_pred)
 # create final chum plots
 chum1 <- visreg(chum.mod5, "juli_date", 
        scale = "response", gg = TRUE, rug = F, partial = F,line.par = list(col = 'black')) + 
-  xlab(expression(paste("Julian Day"))) + 
-  ylab("Chum Salmon") + coord_cartesian(ylim = c(0,300)) +
+  xlab(expression(paste("Day of year"))) + 
+  ylab("Average Chum Salmon (#/seine)") + coord_cartesian(ylim = c(0,300)) +
     geom_point(data = fish, aes(x = juli_date, y = SALCHUM)) + 
   plot_theme()
 chum1
@@ -1664,6 +1760,23 @@ chum2 <- visreg(chum.mod5, "avg_density",
   plot_theme()
 chum2  
 
-plot_grid(chum1, chum2)
+chum.plots <- chum1 + chum2 + plot_annotation(tag_levels="a")
 ```
 
+## model table pink/chum
+```{r}
+library(sjPlot)
+summary(pink.mod2)
+summary(chum.mod5)
+tab_model(chum.mod5, pink.mod2,
+          dv.labels = c("Juvenile Chum Salmon", "Juvenile Pink Salmon"),
+          show.est = TRUE, string.est = "Estimate", show.r2 = FALSE,
+          show.stat = TRUE, string.stat = "Statistic",
+          show.se = TRUE, show.ci = FALSE, string.p = "P-Value",
+          string.se = "Standard Error", p.style = "numeric",
+           pred.labels = c("intercept", "julian day", 
+                           "quadratic julian day", 
+                          "average sea otter density",
+                          "average eelgrass biomass",
+                          "distance from anadromous stream"))
+```
