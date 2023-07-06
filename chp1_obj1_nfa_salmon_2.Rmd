@@ -1,0 +1,1906 @@
+---
+title: "chp1_obj1_nfa_salmon_2"
+author: "Lia Domke"
+date: "4/21/2023"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+We're going to start this script the same way as the chp1_obj1_nfa_salmon_attempt1
+
+- We load the seine data from the nearshore fish atlas 
+
+- We then fix a couple incorrect species
+
+- Then subset by habitat
+
+- Subset by salmon only - but make sure to keep the zeros! 
+
+```{r theme settings, include=FALSE}
+# Creates custom base plot theme that can adjust every graph that you use plot_theme for! First create custom plot theme
+
+plot_theme <- function() {
+  theme_bw(base_size = 24, base_family = "Helvetica") %+replace%
+    theme(panel.background  = element_blank(),
+            plot.background = element_rect(fill="transparent", colour=NA), 
+            legend.background = element_rect(fill="transparent", colour=NA),
+            legend.key = element_rect(fill="transparent", colour=NA),
+            panel.grid.major = element_blank(), 
+            panel.grid.minor = element_blank())
+}
+
+# to use ggsave and export plots include argument 'device=cario_pdf' e.g.: 
+# ggsave("name.pdf", device=cairo_pdf, width = 6, height = 6)
+```
+```{r libraries, include = FALSE}
+library(tidyverse)
+library(mgcv)
+library(sf)
+library(lmtest)
+library(gratia) # includes the variance_comp fxn
+library(knitr) # to write out bibtext citation for packages
+library(sjPlot) # has the tab_models for the summary tables
+library(AICcmodavg) # has the aictab and bictab for creating model selection tables
+library(visreg)
+```
+```{r}
+#write_bib("mgcv", file = "../../References/mgcv_citations.bib")
+```
+
+# Cleaning salmon data
+Initially lets just use data from the Nearshore Atlas seines
+We want to make sure we're only including data from the SESO region and that we look at seines that occurred between April and July (based on when salmon outmigrated in 2017). We also only want seines that happened in eelgrass and understory kelp habitats. 
+
+```{r data, include=FALSE}
+seso <- read.csv("Data/noaa_region_seso.csv", stringsAsFactors=FALSE, header = TRUE)
+```
+
+
+1. Fix incorrect species
+
+```{r include=FALSE}
+unique(seso$taxon)
+unique(seso$Sp_CommonName) # there are a couple of non fish species, 93 unique species 
+
+incor <- c("SHRMGRA", "BSNAILW", "CRABHEL", "JLYMOON", "JLYCLNG", "TUNICAT", "SHRMDOC", "STARLEA", "SHRMSTI",
+           "SHRMSPO", "CRABHER", "SHRMHIP", "ISOPODG", "CRABGD", "CRABDUN", "SHRMCR", "ISOPODC", "SHRMCOO",
+           "CRABGKE", "UNMYSID", "CRABNKE", "NUDOPAL", "NUDHOOD")
+
+seso_fish <- seso %>%
+  mutate(taxon = ifelse(SpCode %in% incor, "invertebrate", taxon)) %>%
+  filter(taxon == "fish") %>%
+    filter(Habitat == "Eelgrass"| Habitat == "Kelp")
+
+#unique(seso_fish$Sp_CommonName) # now only 70 
+```
+
+2. Filter by habitat
+
+```{r include=FALSE}
+glimpse(seso_fish)
+
+seso_fish_sub <- seso_fish %>%
+  filter(Mon == "Jul" | Mon == "Apr" | Mon == "Jun" | Mon == "May") %>%
+  filter(Gear == "BSEINE")
+
+sites_by_event <- unique(seso_fish_sub[c("SiteID", "EventID","Habitat", "Date", "Mon", "Year", "Locale", "Location")])
+length(unique(seso_fish_sub$SiteID)) # 42 sites that were in southern southeast alaska in the Months of interest
+```
+
+Create sal.wide.sp/sal.long.sp that INCLUDES species - this should only be used for species specific modelling.
+```{r}
+sal.wide.sp <- seso_fish_sub %>%
+  mutate(abundance = as.numeric(ifelse(is.na(seso_fish_sub$Length), paste(seso_fish_sub$Unmeasured), 1))) %>%
+  pivot_wider(id_cols = c("SiteID", "EventID","Habitat", "Date", "Mon", "Year", "Locale", "Location",
+                          "Lat1", "Long1"), names_from=SpCode, values_from=abundance, values_fill = 0, values_fn = sum) %>%
+  dplyr::select(c("SiteID", "EventID","Habitat", "Date", "Mon", "Year", "Locale", "Location",
+                          "Lat1", "Long1", "SALSOCK", "SALPINK", "SALCOHO", "SALCHUM")) # No chinook in the data
+
+sal.long.sp <- sal.wide.sp %>%
+  pivot_longer(cols = c("SALSOCK", "SALPINK", "SALCOHO", "SALCHUM"), names_to = "SpCode", values_to = "abundance")
+```
+
+Have to also create sal.long that DON'T INCLUDE species specific numbers so that we can model them all together
+```{r}
+sal.long <- sal.wide.sp %>%
+  mutate(abundance = rowSums(dplyr::select(., contains("SAL")))) %>% # this works SICK
+  dplyr::select(!(contains("SAL"))) %>% # drop the sal cols 
+  mutate(Date = mdy(Date),
+         doy = yday(Date))
+
+```
+
+
+# Describe set up to script
+
+We discussed this with Ole and this is pulled from a google doc we created together about how to deal with the variability in these data. 
+https://docs.google.com/document/d/1mHvsx_421wjn7mRfirtgII8wTgFTpV8MnaBCqB5VN7o/edit#heading=h.wdg6irmnzi69
+
+In our data we want to model: 
+
+**Occurrence component:**
+
+How does occurrence of different salmon species (or aggregate across salmon) change with habitat (kelp v. eelgrass), while accounting for some covariates that are annoying but we don’t really care about (month, year, maybe something about space?)
+
+**Conditioned on presence component:**
+
+How does abundance of different salmon species (or aggregate across salmon) change with habitat (kelp v. eelgrass), while accounting for some covariates that are annoying but we don’t really care about (month, year, maybe something about space?)
+
+
+**Statistical model.**
+Data are Counts.  So we need a count model.
+	
+	Options: 
+    
+    Poisson
+    
+    Negative Binomial.
+    
+    Gaussian approximation…. Works if you are not near zero.  And you have large numbers of samples… and your observation variance isn’t huge.
+    
+    If you want to ignore the zeros, use a truncated version of the count distribution.
+
+
+Models:
+
+Indexes:
+
+i= observation (categorical)
+
+j= site (categorical)
+
+m= month (categorical or continuous)
+
+y= year (categorical)
+
+h= discrete habitats (eelgrass, kelp) 
+
+
+
+**General Form:**
+
+
+$$Y_{ijmyh} = ~DISTRIBUTION(\mu, \phi)$$
+$$log(\mu) = f(site, month, habitat)$$
+Where f() is some function
+
+
+**Options for f():**
+
+Overall constraints.
+
+  - We care a lot about habitat (2 parameters)
+
+  - We care a little about month (~4ish parameters)
+  
+  - We don’t care so much about site (make this as simple as humanly possible). ~ 4 ish parameters.
+  
+That makes ~ 10 parameters. 
+	
+	- ~60ish observations total. 
+	
+	- Includes all zero observations.
+	
+	- Without zeros you are ~45  ish observations.
+	
+	- Rule of thumb is ~ 10 observations per parameter.
+
+
+
+# Getting into the model form
+## Ways of thinking about time: 
+
+
+
+$$log(\mu) = (1|site) + month + habitat$$
+
+Months = 4 parameters
+
+$$log(\mu) = (1|site) + (1|month) + habitat$$
+
+Month = something between 2 - 4 parameters. This is a way to share information among months. 
+
+$$log(\mu) = (1|site) + s(month) + habitat$$
+
+Months = something between 2 - 4 paramters. This is a different way of sharing information among months. Months here *have to be continuous*. 
+  
+R form: r library(mgcv) - r s(month, k = 2)
+
+Where k defines number of knots (or amount of smoothing - could also try 3)
+
+
+## Ways of thinking about variation across space:
+
+$$log(\mu) = (site) + (month) + habitat$$
+
+This is probably barely identifiable - requires about 41 parameters *alone* for site. 
+
+**Dont do this**
+
+$$log(\mu) = (1|site) + month + habitat$$
+
+This means sites are random pulls from our normal bucket (or distribution) of sites
+
+Parameters: something > 2, less than 41. Probably between 4 - 10 ish
+
+$$log(\mu) = s(lat,lon) + month + habitat$$
+
+Sites that are closer together are more similar than those farther apart
+
+You have to constrain s(lat,lon) because it can't be too wiggly (will take too many params)
+
+Parameter numbers (41 sites so  your s(lat,lon) has to use << 41. Ideally less than 10 parameters)
+
+**Note about this method** - Plot your sites on a map with catch, If you see a pattern then Try this. If not **ignore**
+
+## What will work best? 
+
+Best guess that
+
+$$Y_{ijmyh} ~ NegativeBinomial(\mu, \phi)$$
+
+When phi gets really small, this is a problem because:
+
+$$mean(Y_{ijmyh}) = \mu$$
+$$var(Y_{ijmyh}) = \mu + \mu^2\phi^{-1}$$
+
+Which means that as phi gets small the variance goes to infinity 
+
+
+**Other things to worry about**
+
+- That you're using the correct negative binomial (there are like seven). 
+Check the documentation to make sure that the mean and variance have the form above
+
+- That you're using the log-link, not identity link
+
+- In mgcv family = "negbin" is the correct form
+
+**Fun tricks with negative binomial**
+
+If you're interested in the probability of occurrence - you can calculate it -
+
+$$p(Y = 0|\mu,\phi)... 1 - p(Y = 0|\mu,\phi)$$
+
+**Calculating confidence intervals**
+
+- Marginal 
+
+$$\mu +/- SE$$
+
+- Predictive intervals: 
+
+$$p(Y_{new}|\mu,\phi)$$
+
+  1. Get the covariance among parameters (extract Hessian matrix then inverse it)
+  
+  2. Simulate from that covariance (aka (mu, phi) ~ MVN(parameters, inverse hessian))
+  
+  
+Sesh - now that we know what we're getting into we want to set up exploring some of these models
+
+# Variation across time
+## All salmon
+```{r}
+glimpse(sal.long)
+# this is what we want to use for all species models
+
+hist(sal.long$abundance)
+table(sal.long$abundance >0) # 21 seines with no salmon, 51 with
+
+hist(log(sal.long$abundance + 1))
+
+# mgcv kinda insists that grouping or categorical variables be coded as factors
+sal.long$SiteID <- factor(sal.long$SiteID, ordered = FALSE)
+sal.long$Habitat <- factor(sal.long$Habitat, ordered = FALSE)
+```
+
+
+So we want to experiment with a couple distributions - poisson and negative binomial
+
+$$log(\mu) = month + habitat + (1|site)$$
+```{r}
+require(mgcv)
+# Okay note about the family specification, family = "nb" is used for gam/bam to estimate the theta parameter. Based on the negbin {mgcv} documentation page, there arre two ways to estimate theta: 
+  # - with negbin if "performance iteration" is used for the smoothering parameter estimation
+  # theta is choosen to ensure that the pearson estimate of the scale parameter is close to 1
+# other method:
+  # - if "outer iteration" then with the nb family theta is estimated alongside smoothing with ML or REML
+gamm1 <- gamm(abundance ~ Mon + Habitat, random = list(SiteID = ~1),
+        data = sal.long, family = "nb", niterPQL=9999)
+summary(gamm1$gam)
+anova(gamm1$gam) # this shows similar things to summary(gamm1$gam), 
+# the anova(gamm1$gam) is handy if there are variables with more than two levels (like month in this case)
+# Interpretation based on the penguin book pg 336 
+# Scale est is the variances of the residuals inside the algorithm
+# the parametric coefficients tell me that Month treatments (Jul, Jun) are significantly different than 0 at the 5% level. Specifically that the Intercept for July and June were -4.7 and -3.4 lower than the intercept for April
+
+# note that there is no smoother in this case
+
+# to get the fitted value for the typical obsrevation we add intercept (6.4) + Month effec for July (-4.7)
+
+# okay now lets look at the lme part
+summary(gamm1$lme) # I think (!!!! just think!!) that because there is no smooth term of this gam (so glmm) the output 
+# is a linear mixed effects
+# it does show the correlation matrix tho
+
+#the variance of the random intercept for site is 0.00012 quite small 
+# can check for autocorrelation in residual structure
+resid.gamm1 <- resid(gamm1$lme, type = "pearson")
+plot(sal.long$doy, resid.gamm1) # some grouping by dates, this is likely cause that was when tides were good
+
+
+gam.sum$dispersion # this is probably THETA - jk its not. 
+
+######## OKAY overall what I did above looks okay ###########
+# However - it looks like gamm does not support theta estimation, so I'm unsure how to estimate theta correctly. 
+# And I'm worried that using "nb" for the family is not supposed to be usable with gamm (see negbin{mgcv} documentation)
+
+# If we use gamm with negbin without specifying theta we get tossed an error
+# and we dont get a theta value with nb so I tried using a diff package to est theta but also am worried its not a valid approach
+require(lme4) # the model below is estimating theta at 0.248
+glmm1 <- lme4::glmer.nb(abundance ~ Habitat + Mon + (1|SiteID), data = sal.long) 
+
+resid.glmm1 <- resid(glmm1, type = "pearson")
+par(mfrow=c(1,2))
+plot(sal.long$doy, resid.glmm1)
+points(sal.long$doy, resid.gamm1, pch = 3) # the residuals for these two models are EXACTLY the same for the lme part, but the intercept and variance estimates are off from each other. 
+
+#  But if you compare the AIC and BIC values then they show up as different values 
+summary(glmm1) # AIC value 608, BIC 336
+summary(gamm1$gam) # no AIC or BIC value
+summary(gamm1$lme) # AIC 320 and BIC 336
+
+AIC(glmm1); AIC(gamm1$lme)
+BIC(glmm1); BIC(gamm1$lme)
+# So in conclusion when comparing the LME4 AND GAMM functions they have pretty different AIC values SO 
+# We don't want 
+
+# but in the interium I'm going to use that in the gamm
+gamm1.2 <- gamm(abundance ~ Mon + Habitat, random = list(SiteID = ~1),
+        data = sal.long, family = negbin(theta = 0.248), niterPQL=9999) # I think this is wrong, I'm worried that it takes this theta as the true theta rather than as a starting point for estimation. 
+# future Lia says yes - it takes it as the TRUE THETA not what we want. Bad model. 
+
+summary(gamm1.2$gam)
+summary(gamm1.2$lme)
+
+# Following up on this negbin versus nb
+# https://groups.google.com/g/r-help-archive/c/t1OFEPETjpc
+# this google conversation (answered by simon wood) - states that nb() defaults to REML for smoothing parameter estimation and negbin() defaultrs to UBRE unless method = "REML" is specified. 
+# this link also seems to indicate that negbin is treating theta was FIXED. 
+
+gam0.5 <- gam(abundance ~ s(SiteID, bs = "re"), family = "nb", data = sal.long, method = "ML")
+summary(gam0.5)
+variance_comp(gam0.5)
+sd(d1$means)
+# these two sd and variances match... 
+# gam1 controls for both Month and Habitat, if we don't have month and habitat then you have all this variability among Sites. However if you do include Month (and Habitat) then the variances between sites is super low. 
+# what is the among site difference in average catch rate? When month included the site variance from the mean is super low. Month incorporates it
+
+gam1 <- gam(abundance ~ Habitat + Mon + s(SiteID, bs = "re"), family = "nb", data = sal.long, 
+            method = "ML")
+summary(gam1)
+AIC(gam1); BIC(gam1) # when using smoothed random effect at least the AIC looks better
+# average april catch in eelgrass
+# april and may catch rates about the same, then drop off progressively across june, july
+
+# what do the residuals look like? 
+gam.check()
+```
+So to conclude all of that commented information - we'll need to compare models that were all fit using the same package {mgcv}
+And make sure to use the nb family because that one estimates theta 
+The residuals from the gamm (gamm1) look identical to those fit with lme4 (glmm1) but the AIC/BIC values differ 
+
+
+Lets do a quick look at comparing models with and without th erandom intercept
+(based on page 123 of the penguin book)
+```{r}
+gam.re <- gam(abundance ~ 1 + Mon + Habitat, family = "nb", data = sal.long)
+gam.re1 <- gam(abundance ~ 1 + Mon + Habitat + s(SiteID, bs = "re"), family = "nb", data = sal.long)
+
+# this is testing the random effects structure and includes: 
+# no random term (gam.re)
+# random intercept
+
+AIC(gam.re); AIC(gam.re1)
+BIC(gam.re); BIC(gam.re1)
+
+# is there a chance that because the random effects explains so little of the variation that it does not make sense to include in the model? 
+
+```
+
+
+$$log(\mu) = habitat + (1|site) + (1|month)$$
+
+```{r}
+# note this iterates for a long time and goes through 1648
+# then gives the error: system is computationally singular: reciprocal condition number = 1.03e-23
+gamm2 <- gamm(abundance ~ Habitat, random = list(SiteID = ~1, Mon = ~1),
+        data = sal.long, family = "nb", niterPQL=9999)
+summary(gamm2$gam)
+
+# ?gam.models
+# what if we tried fitting these with gam and use re 
+# make sure SiteID and Mon are factors
+sal.long$SiteID <- as.factor(sal.long$SiteID)
+sal.long$Mon <- as.factor(sal.long$Mon)
+gam2 <- gam(abundance ~ Habitat + s(SiteID, bs = "re") + s(Mon, bs = "re"), family = "nb", data = sal.long, 
+            method = "ML")
+# s(site, bs = "re")
+# (0 + grass | site) -> s(site, grass, bs="re"), varying with the slope of some term
+library(gratia)
+variance_comp(gam2) # treating both month and site as random intercepts, 
+# if we have a normal distribution of the random effects - the variance in the variance_comp is the SD (width of tails)
+# of the individual sites. So the SiteID variance is MINIMAL. When month is re than more variabilitiy of month compared to sites. 
+
+variance_comp(gam1) # this is treating month as fixed, and site as re; very low variance between sites. 
+
+d1 <- sal.long %>%
+  group_by(SiteID) %>%
+  dplyr::summarise(means = mean(log(abundance+1))) # what is going on with the low variance amongst sites?
+
+hist(d1$means)
+
+summary(gam2)
+# Okay notes about incorporating random effects for both Site and Mon
+# using gamm doesn't seem to want to fit having two random intercepts for site and month
+# by including month as a random effect that means you're not looking at the effect of month
+# QUESTION - how do I specify (and make sure) that its a random intercept not slope? 
+
+# other notes: 
+# if the variable (site and mon) are factors that s(factor, bs = "re) produces a random coefficient for each level of g. With each coefficient as iid nomral. 
+# if you make it s(x, g, bs = "re") and x is numeric and g is a factor then its an iid normal random SLOPE relating the response of X for EACH LEVEL OF G. 
+# if we have g and h as factors then s(h, g, bs = "re") produces the usually iid normal g-h interaction. 
+
+summary(gam2) 
+# if you note the theta for this is estimated at 0.234
+AIC(gam2); AIC(gamm1$lme); AIC(gamm1$gam); AIC(gam1)
+BIC(gam2); BIC(gamm1$lme); BIC(gamm1$gam); BIC(gam1)
+# note that the gamm object (that is divided into two parts) does not produce a AIC or BIC for the gam component
+# QUESTION: so what is the best way to compare these models? And what is the best form to do that in? 
+```
+
+
+$$log(\mu) = habitat + (1|site) + s(month)$$
+
+Note here months have to be continuous
+```{r}
+
+gamm3 <- gamm(abundance ~ Habitat + s(doy, k = 3), random = list(SiteID = ~1), data = sal.long, family = "nb", niterPQL=999)
+summary(gamm3$gam)
+summary(gamm3$lme)
+
+gam.check(gamm3$gam) # this doesn't look the best example - we would want consistent variance across the fitted values
+
+gam3 <- gam(abundance ~ Habitat + s(doy, k = 3) + s(SiteID, bs = "re"), data = sal.long, 
+    family = "nb", method = "ML")
+
+summary(gam3) # the edf is close to 1 and the residual plots make it look linear and paired with the non-continuous sampling of the sites month is probably best parameterized as a linear term with MONTH AS FACTOR (gaps in between)
+plot(gam3)
+variance_comp(gam3)
+
+variance_comp(gam0.5)
+variance_comp(gam1)
+
+# what about including doy as a linear fixed effect
+gam3.2 <- gam(abundance ~ Habitat + doy + s(SiteID, bs = "re"), data = sal.long, 
+    family = "nb", method = "ML")
+summary(gam3.2)
+
+
+AIC(gam1); AIC(gam2); AIC(gam3); AIC(gam3.2) # that seems wild - they're all basically the same, how do we know the best way to parameterize this model? 
+BIC(gam1); BIC(gam2); BIC(gam3); BIC(gam3.2)
+```
+Its probably not great to include month as a random effect here because there is only 4 and there should be at least 5. 
+The variance is likely not easily calculated for Month
+
+
+# Variation across space
+
+$$log(\mu) = (1|site) + month + habitat$$
+**Note** this is the same model as gam1 so it wont be repeated here
+
+$$log(\mu) = s(lat,lon) + month + habitat$$
+**Note** only do this if there is a pattern across space
+
+So first we need to check if there is a pattern across space
+ I'd visualize this as some kind of map with little histograms by site location. 
+```{r}
+library(sf)
+# read in spatial dataframe
+seak_base <- st_read(dsn = "../Maps_NOAA&Otter",
+        layer = "southern_seak_espg6394") %>%
+  st_transform(crs = 4326)
+
+```
+ 
+```{r}
+glimpse(sal.long)
+
+sal.location <- unique(sal.long[c("SiteID", "EventID", "Location",
+                  "Lat1", "Long1", "Habitat")]) # 72 unique event IDs
+
+#write.csv(sal.location, "chp1_obj2_sites.csv")
+
+sal.sites <- sal.location %>%
+  st_as_sf(coords = c("Long1", "Lat1"), crs = 4326)
+
+#st_write(sal.sites, "sal.sites.sf.shp")
+
+seak_crop <- seak_base %>%
+  st_crop(y = sal.sites)
+
+# how do we define regions?
+# i.e. where are the clusters of data?
+
+map.sites <- ggplot() +
+  geom_sf(data = seak_crop, mapping = aes(), color = "black") +
+  geom_sf(data = sal.sites, mapping = aes(color = Habitat)) +
+  geom_vline(xintercept = -132.5, linetype = "dashed", color = "red") +
+  labs(x = "Latitude", y = "Longitude")
+
+map.sites
+# based on this there looks like a good break would be 132.5W
+ktn.sites <- sal.location %>%
+  filter(Long1 > -132.5) %>% # 14 sites
+  st_as_sf(coords = c("Long1", "Lat1"), crs = 4326)
+
+pow.sites <- sal.location %>%
+  filter(Long1 < -132.5) %>% # 58 sites, this isn't the evenest  
+  st_as_sf(coords = c("Long1", "Lat1"), crs = 4326)
+
+```
+
+Now considering this breakdown of the region into two zones - are there differences in catch between those two areas? 
+
+```{r}
+ktn <- ktn.sites %>%
+  dplyr::select(SiteID, EventID) %>%
+  st_drop_geometry() %>%
+  mutate(region = "ktn")
+
+all <- pow.sites %>%
+  dplyr::select(SiteID, EventID) %>%
+  st_drop_geometry() %>%
+  mutate(region = "pow") %>%
+  rbind(ktn)
+
+sal.long.region <- left_join(sal.long, all)
+
+sal.long.region %>%
+  group_by(Habitat, region) %>%
+  dplyr::summarise(sd = sd(abundance),
+                   avg = mean(abundance)) %>%
+  ungroup() %>%
+  ggplot() +
+  geom_col(mapping = aes(x = Habitat, y = avg), color = "black") +
+  geom_errorbar(mapping = aes(x = Habitat, ymin = avg, ymax = avg + sd), width = 0.2) +
+  plot_theme() +
+  labs(y = "Average salmon abundance") +
+  facet_wrap(~region)
+# so the variability overall looks pretty different between pwo and ktn - is this variability consistent when you look across the different types of replicates? 
+
+sal.long.region %>%
+  group_by(Habitat, region, Mon) %>%
+  mutate(Mon = fct_relevel(Mon, c("Apr", "May", "Jun", "Jul"))) %>%
+  dplyr::summarise(sd = sd(abundance),
+                   avg = mean(abundance)) %>%
+  ggplot(mapping = aes(x = Mon, y = avg, fill = Habitat)) +
+  geom_col(position = position_dodge(0.9)) +
+  geom_errorbar(mapping = aes(x = Mon, ymin = avg, ymax = avg + sd), 
+                width = 0.2, position = position_dodge(0.9)) +
+  facet_wrap(~region)
+
+table(sal.long.region$region, sal.long.region$Habitat)
+
+# still a difference between region even tho the error bars are wonky - in addition we have stratification of sampling by month in the ktn area (and a big diff in n). All sampling in ktn happened in June. 
+```
+
+```{r}
+gam4 <- gam(abundance ~ Habitat + Mon + s(Lat1, Long1, k = 2), data = sal.long, 
+    family = "nb", method = "ML") # might be worth comparing the s versus te (tensoor field), if the k is unconstrained than with the s it takes k == 2 and te it takes 3
+
+summary(gam4) # a note about this, the smoothed term in this case (representative of the stratification of the sites) so in that way you shouldn't need to have random effect. 
+plot(gam4)
+variance_comp(gam4)
+
+gam.check(gam4) # okay so using the gam.check, it "indicates low p-value (k-index < 1) may indicate that k is too low, especially if edf is close to k" 
+
+gam4.3 <- gam(abundance ~ Habitat + Mon * s(Long1), data = sal.long, family = "nb", method = "ML")
+
+# so what if we increase the value of k (although Ole did indicate that we didn't want to get to complicated with the knots)
+# what if we include just the Longitude and look at that, especially because the sites weren't 
+gam4.1 <- gam(abundance ~ Habitat + Mon + s(Long1, k = 3), data = sal.long,
+              family = "nb", method = "ML")
+plot(gam4.1)
+summary(gam4.1)
+gam.check(gam4.1) # okay but does this even change? 
+
+# REVIEW ZURR OR SOMETHING ELSE ONLINE
+gam4.2 <- gam(abundance ~ Habitat + Mon + s(Long1, k = 3), data = sal.long,
+              family = "nb", method = "ML", correlation = corExp(form = ~Lat1 + Long1))
+#correlation=corSpher(form = ~ Latitude + Longitude)
+# this (above) is another way of fittting spatial correlation. 
+plot(gam4.2)
+summary(gam4.2)
+gam.check(gam4.2)
+sal.long$r1 <- resid(gam4.2)
+sal.long$r2 <- resid(gam1)
+
+g1 <-ggplot(aes(x = Long1, y = Lat1, color = r1), data = sal.long) +
+  geom_point() # spatial residuals of the model from gam 4.2 - compare to a model that doesn't have spatial structure
+g2<- ggplot(aes(x = Long1, y = Lat1, color = r2), data = sal.long) +
+  geom_point()
+# okay so honestly - these two plots don't look that different - if we saw clumps of positive and negative values then we would probably need to better account for spatial correlation. 
+
+library(patchwork)
+g1 + g2
+plot(Variogram(gam4.2, form = ~ Lat1 + Long1, 
+               resType = "normalized", data = sal.long))
+
+
+
+AIC(gam4); AIC(gam4.1) # 
+BIC(gam4); BIC(gam4.1)
+
+AIC(gam1); AIC(gam2); AIC(gam3); AIC(gam4); AIC(gam4.1)
+BIC(gam1); BIC(gam2); BIC(gam3); BIC(gam4); BIC(gam4.1) # based on BIC right now gam3 (habitat + s(doy) + s(site, re))
+```
+
+ 
+ 
+$$log(\mu) = (region|site) + habitat + month$$ 
+
+have to check the order of this
+- see ?gam.models for help documentation of how to fit nested terms
+
+```{r}
+# create a region variable
+sal.region <- sal.long %>%
+  mutate(region = ifelse(Long1 < -132.5, "pow", "ktn"))
+
+table(sal.region$region) # 14 in ktn and 58 in pow, definitely unequal sampling
+
+gam5 <- gam(abundance ~ Habitat + Mon + region + s(SiteID, bs = "re"), data = sal.region, 
+    family = "nb", method = "ML")
+
+summary(gam5)
+
+AIC(gam1); AIC(gam2); AIC(gam3); AIC(gam4); AIC(gam4.1); AIC(gam5)
+BIC(gam1); BIC(gam2); BIC(gam3); BIC(gam4); BIC(gam4.1); BIC(gam5)
+
+# what about comparing deviance explained? 
+summary(gam1); summary(gam2); summary(gam3); summary(gam4); summary(gam4.1); summary(gam5)
+
+gam6 <- gam(abundance ~ Habitat + doy + s(SiteID, bs = "re"), data = sal.region, 
+    family = "nb", method = "ML")
+
+AIC(gam6); BIC(gam6)
+AIC(gam3); BIC(gam3)
+```
+
+
+# candidate model table
+```{r}
+cand.models <- list() # create an empty list to include all the candidate models
+cand.models[[1]] <- gam1 # add in  models one at a time
+#cand.models[[2]] <- gam2
+cand.models[[2]] <- gam3
+#cand.models[[4]] <- gam4
+#cand.models[[5]] <- gam4.1
+cand.models[[3]] <- gam5
+cand.models[[4]] <- gam6
+
+all.models <- list()
+all.models[[1]] <- gam1
+all.models[[2]] <- gam2
+all.models[[3]] <- gam3
+all.models[[4]] <- gam4
+all.models[[5]] <- gam4.1
+all.models[[6]] <- gam5
+all.models[[7]] <- gam6
+
+# create vector with "model names" in this case, I'm including the formulas from each model (so I know whats in each one!)
+Modnames <- paste (c(formula(gam1), formula(gam3), formula(gam5), formula(gam6)))
+
+Modnames.all <- paste(c(formula(gam1), formula(gam2), formula(gam3), formula(gam4),
+                        formula(gam4.1), formula(gam5), formula(gam6)))
+```
+
+
+```{r}
+# create dataframe with model names. 
+cand.models
+
+d <- data.frame()
+for(i in 1:length(cand.models)) {
+  mod <- cand.models[[i]]
+  name <- paste(c(formula(mod)))
+  aic <- AIC(mod)
+  bic <- BIC(mod)
+  df <- mod$df.null
+  sums <- summary(mod)
+  dev.expl <- sums$dev.expl*100
+  temp <- data.frame(model.names = name, df = df, dev.expl = dev.expl, AIC = aic, BIC = bic)
+  d <- rbind(d, temp)
+}
+
+d <- d %>%
+  arrange(BIC) %>%
+  mutate(delta.BIC = BIC - min(BIC),
+         delta.AIC = AIC - min(AIC)) %>%
+  mutate_if(is.numeric, round, digits = 2)
+
+all.models <- as.data.frame(Modnames.all)
+
+#write.csv(d, "Data/model-selection-chp1obj2.csv")
+#write.csv(all.models, "Data/all-models-chp1obj2.csv")
+```
+
+# Visualizing the best model
+Okay so we're just choosing the best model and its gam1
+```{r}
+par(mfrow=c(1,1))
+visreg(gam1)
+
+
+# okay so for predicting random effects models likely you want to predict to the "average" site - so you might not include it in the predict fucntion. 
+# gam1 uses the sal.long dataframe and includes habitat month and site
+pr.hab <- predict.gam(gam1, newdata = data.frame(Habitat = unique(sal.long$Habitat), Mon = "May", SiteID = "136"), se.fit = TRUE, exclude="s(SiteID, bs = 're')")
+
+pr.mon <- predict.gam(gam1, newdata = data.frame(Habitat = "Eelgrass", Mon = unique(sal.long$Mon), SiteID = "136"), se.fit = TRUE, exclude="s(SiteID, bs = 're')")
+
+pred <- exp(pr.hab$fit) 
+lwr <- exp(pr.hab$fit - (1.96*pr.hab$se.fit))
+upr <- exp(pr.hab$fit + (1.96*pr.hab$se.fit))
+
+pred.m <- exp(pr.mon$fit)
+lwr.m <- exp(pr.mon$fit - (1.96*pr.mon$se.fit))
+upr.m <- exp(pr.mon$fit + (1.96*pr.mon$se.fit))
+
+sal.long$Habitat <- as.character(sal.long$Habitat)
+
+pr.hab.df <- data.frame(cbind(pred, lwr, upr, unique(sal.long$Habitat))) %>%
+  dplyr::rename(Habitat = V4) %>%
+  mutate(fit = as.numeric(pred),
+         lwr = as.numeric(lwr),
+         upr = as.numeric(upr))
+
+sal.long$Mon <- as.character(sal.long$Mon)
+
+pr.mon.df <- data.frame(cbind(pred.m, lwr.m, upr.m, unique(sal.long$Mon))) %>%
+  dplyr::rename(Mon = V4) %>%
+  mutate(Mon = fct_relevel(Mon, "Apr", "May", "Jun", "Jul")) %>%
+  mutate(fit = as.numeric(pred.m),
+         lwr = as.numeric(lwr.m),
+         upr = as.numeric(upr.m))
+```
+
+Visualize it now
+```{r}
+hab <- ggplot(pr.hab.df) +
+  geom_col(aes(x = Habitat, y = fit)) +
+  geom_errorbar(aes(x = Habitat, ymax = fit + upr, ymin = fit - lwr), width = 0.2) +
+  ylim(c(0, 3000)) +
+  plot_theme() +
+  labs(y = "Number of salmon")
+
+mon <- ggplot(pr.mon.df) +
+  geom_col(aes(x = Mon, y = fit)) + 
+  geom_errorbar(aes(x = Mon, ymax = fit + upr, ymin = fit - lwr), width = 0.2) +
+  plot_theme() +
+  labs(x = "Month", y = NULL) 
+
+gam.plot <- hab + mon + plot_annotation(tag_levels="a")
+
+
+summary(gam1)
+#ggsave(gam.plot, filename = "ch1-obj1_hab-mon_plot.png", width = 12, height = 7)
+```
+
+What do the averages look like when we remove the big catches in only a few sites? 
+```{r}
+sal.long %>%
+  filter(!(EventID %in% c(272, 234, 258, 259, 273))) %>% # removing the top 5 seines
+  group_by(Habitat, Mon) %>%
+  dplyr::summarise(avg = mean(abundance),
+                   sd = sd(abundance)) # thne you see that kelp has greater averages
+
+
+# what is happening then? Why does the average eelgrass catch greater than the kelp
+# theres 5/72 seines where eelgrass is larger than kelp, thats only 7% of the time. This is relatively small compared to the rest of the data and does not contribute as much to the model (or you don't get as much weight to it). So the coef of eelgrass doesn't get dragged up. 
+# we are also removing the effects of site (or contorlling for it). 
+
+# only a small subset of the data is really large. 
+
+sal.long %>%
+  filter(abundance > 1000) # 5 seines greater than 1000 salmon caught
+
+unique(sal.long$EventID) # 72 total seines
+5/72 *100
+
+sum(sal.long$abundance) # 11938
+sal.long %>%
+  filter(abundance > 1000) %>%
+  dplyr::summarise(sum = sum(abundance)) # 9424
+9424/11938
+```
+
+# Mapping klawock abundances
+So we also know that the 5 most abundant sites are the ones near klawock inlet, lets graph those spatially and temporally with the abundances
+
+```{r}
+sal.abund <- sal.long %>%
+  filter(Locale == "Klawock Inlet") %>%
+  mutate(Mon = fct_relevel(Mon, "Apr", "May", "Jun", "Jul")) %>%
+  st_as_sf(coords = c("Long1", "Lat1"), crs = 4326) 
+
+# how do we define regions?
+# i.e. where are the clusters of data?
+month.labs <- c("April", "May", "June", "July")
+names(month.labs) <- c("Apr", "May", "Jun", "Jul")
+
+ggplot() +
+  geom_sf(data = seak_crop, mapping = aes(), fill = "gray") +
+  geom_sf(data = sal.abund, mapping = aes(color = log(abundance + 1)), size = 4, alpha = 0.6) +
+  labs(x = "Longitude", y = "Latitude") +
+  coord_sf(xlim = sf::st_bbox(sal.abund)[c(1,3)],
+           ylim = sf::st_bbox(sal.abund)[c(2,4)]) +
+  plot_theme() +
+  scale_color_continuous(name = "Log Abundance") +
+  facet_grid(Habitat ~ Mon, labeller = labeller(Mon = month.labs)) +
+  theme(axis.text.x = element_text(angle = 45))
+  
+```
+
+```{r}
+anova(gam1)
+```
+
+After you go through all of this (also think about using poisson distribution too...) 
+Then you'll pick the best model (but AIC hasn't been all that helpful.. How?)
+
+Take the best model: 
+
+1. Fun tricks with count distributions:
+	You can always calculate  p(Y=0|,)….  1-p(Y=0|,) is the probability of occurrence. All you need is a sharp pencil.
+
+Can calculate two types of confidence intervals
+2. Confidence intervals
+	Marginal e.g.  +/- SE
+	Predictive intervals:  p(Ynew|,)
+Covariance among parameters (aka. Inverse Hessian matrix). 
+Simulate from that covariance (aka. (Mu, phi) ~MVN( parameters, inverse Hessian))
+
+
+
+# Pink and chum abundances
+We also want to do species specific modelling: 
+```{r}
+glimpse(sal.long.sp)
+
+#want to filter to just pink and chum 
+ggplot(sal.long.sp) +
+  geom_col(aes(x = Habitat, y = abundance)) +
+  facet_wrap(~SpCode)
+
+pink.long <- sal.long.sp %>%
+  pivot_wider(names_from = SpCode, values_from = abundance) %>%
+  mutate(Date = mdy(Date),
+         doy = yday(Date)) %>%
+  dplyr::select(-c(SALCOHO, SALSOCK, SALCHUM)) %>%
+  pivot_longer(cols = SALPINK, values_to = "abundance", names_to = "SpCode")
+
+pink.long$SiteID <- factor(pink.long$SiteID, ordered = FALSE) # mgcv needs categoricals to be coded 
+pink.long$Habitat <- factor(pink.long$Habitat, ordered = FALSE) # as factors
+
+chum.long <- sal.long.sp %>%
+  pivot_wider(names_from = SpCode, values_from = abundance) %>%
+  mutate(Date = mdy(Date),
+         doy = yday(Date)) %>%
+  dplyr::select(-c(SALCOHO, SALSOCK, SALPINK)) %>%
+  pivot_longer(cols = SALCHUM, values_to = "abundance", names_to = "SpCode")
+
+chum.long$SiteID <- factor(chum.long$SiteID, ordered = FALSE)
+chum.long$Habitat <- factor(chum.long$Habitat, ordered = FALSE)
+```
+
+# Pink models
+So we want to experiment with a couple distributions - poisson and negative binomial
+
+$$log(\mu) = month + habitat + (1|site)$$
+```{r}
+require(mgcv)
+# Following up on this negbin versus nb
+# https://groups.google.com/g/r-help-archive/c/t1OFEPETjpc
+# this google conversation (answered by simon wood) - states that nb() defaults to REML for smoothing parameter estimation and negbin() defaultrs to UBRE unless method = "REML" is specified. 
+# this link also seems to indicate that negbin is treating theta was FIXED. 
+
+pink0.5 <- gam(abundance ~ s(SiteID, bs = "re"), family = "nb", data = pink.long, method = "ML")
+summary(pink0.5)
+variance_comp(pink0.5)
+
+# gam1 controls for both Month and Habitat, if we don't have month and habitat then you have all this variability among Sites. However if you do include Month (and Habitat) then the variances between sites is super low. 
+# what is the among site difference in average catch rate? When month included the site variance from the mean is super low. Month incorporates it
+
+pink1 <- gam(abundance ~ Habitat + Mon + s(SiteID, bs = "re"), family = "nb", data = pink.long, 
+            method = "ML")
+summary(pink1)
+AIC(pink1); BIC(pink1) # when using smoothed random effect at least the AIC looks better
+# average april catch in eelgrass
+# april and may catch rates about the same, then drop off progressively across june, july
+
+# what do the residuals look like? 
+gam.check(pink1) 
+```
+So to conclude all of that commented information - we'll need to compare models that were all fit using the same package {mgcv}
+And make sure to use the nb family because that one estimates theta 
+
+
+Lets do a quick look at comparing models with and without the random intercept
+(based on page 123 of the penguin book)
+```{r}
+pink.re <- gam(abundance ~ 1 + Mon + Habitat, family = "nb", data = pink.long)
+pink.re1 <- gam(abundance ~ 1 + Mon + Habitat + s(SiteID, bs = "re"), family = "nb", data = pink.long)
+
+# this is testing the random effects structure and includes: 
+# no random term (gam.re)
+# random intercept
+
+AIC(pink.re); AIC(pink.re1)
+BIC(pink.re); BIC(pink.re1)
+
+# is there a chance that because the random effects explains so little of the variation that it does not make sense to include in the model? 
+
+```
+
+
+$$log(\mu) = habitat + (1|site) + (1|month)$$
+
+```{r}
+# ?gam.models
+# what if we tried fitting these with gam and use re 
+# make sure SiteID and Mon are factors
+pink.long$SiteID <- as.factor(pink.long$SiteID)
+pink.long$Mon <- as.factor(pink.long$Mon)
+
+pink2 <- gam(abundance ~ Habitat + s(SiteID, bs = "re") + s(Mon, bs = "re"), family = "nb", data = pink.long, method = "ML")
+# s(site, bs = "re")
+# (0 + grass | site) -> s(site, grass, bs="re"), varying with the slope of some term
+library(gratia)
+variance_comp(pink2) # treating both month and site as random intercepts, 
+# if we have a normal distribution of the random effects - the variance in the variance_comp is the SD (width of tails)
+# of the individual sites. So the SiteID variance is less than month for sure, but not as minimal with all species included. When month is re than more variabilitiy of month compared to sites. 
+
+variance_comp(pink1) # this is treating month as fixed, and site as re; some variacne between sites not unreasonably low. 
+
+d2 <- pink.long %>%
+  group_by(SiteID) %>%
+  dplyr::summarise(means = mean(log(abundance+1))) # what is going on with the low variance amongst sites?
+
+hist(d2$means)
+
+summary(pink2)
+# Okay notes about incorporating random effects for both Site and Mon
+# using gamm doesn't seem to want to fit having two random intercepts for site and month
+# by including month as a random effect that means you're not looking at the effect of month
+# QUESTION - how do I specify (and make sure) that its a random intercept not slope? 
+
+# other notes: 
+# if the variable (site and mon) are factors that s(factor, bs = "re) produces a random coefficient for each level of g. With each coefficient as iid nomral. 
+# if you make it s(x, g, bs = "re") and x is numeric and g is a factor then its an iid normal random SLOPE relating the response of X for EACH LEVEL OF G. 
+# if we have g and h as factors then s(h, g, bs = "re") produces the usually iid normal g-h interaction. 
+
+summary(pink2) 
+# if you note the theta for this is estimated at 0.152
+AIC(pink2); AIC(pink1); AIC(pink0.5)
+BIC(pink2); BIC(pink1); BIC(pink0.5)
+# note that the gamm object (that is divided into two parts) does not produce a AIC or BIC for the gam component
+# QUESTION: so what is the best way to compare these models? And what is the best form to do that in? 
+```
+
+
+$$log(\mu) = habitat + (1|site) + s(month)$$
+
+Note here months have to be continuous
+```{r}
+
+pink3 <- gam(abundance ~ Habitat + s(doy, k = 3) + s(SiteID, bs = "re"), data = pink.long, 
+    family = "nb", method = "ML")
+
+summary(pink3) # the edf is close to 1 and the residual plots make it look linear and paired with the non-continuous sampling of the sites month is probably best parameterized as a linear term with MONTH AS FACTOR (gaps in between)
+plot(pink3)
+variance_comp(pink3)
+
+variance_comp(pink0.5)
+variance_comp(pink1)
+
+# what about including doy as a linear fixed effect
+pink3.2 <- gam(abundance ~ Habitat + doy + s(SiteID, bs = "re"), data = pink.long, family = "nb", method = "ML")
+summary(pink3.2)
+
+pink3.3 <- gam(abundance ~ Habitat + doy + I(doy^2) + s(SiteID, bs = "re"), data = pink.long, 
+    family = "nb", method = "ML")
+summary(pink3.3)
+
+AIC(pink1); AIC(pink2); AIC(pink3); AIC(pink3.2); AIC(pink3.3)
+BIC(pink1); BIC(pink2); BIC(pink3); BIC(pink3.2); BIC(pink3.3)
+```
+Its probably not great to include month as a random effect here because there is only 4 and there should be at least 5. 
+The variance is likely not easily calculated for Month
+
+
+## Pink variation in space
+
+$$log(\mu) = (1|site) + month + habitat$$
+**Note** this is the same model as pink1 so it wont be repeated here
+
+$$log(\mu) = s(lat,lon) + month + habitat$$
+**Note** only do this if there is a pattern across space
+
+So first we need to check if there is a pattern across space
+ I'd visualize this as some kind of map with little histograms by site location. 
+```{r}
+library(sf)
+# read in spatial dataframe
+seak_base <- st_read(dsn = "../Maps_NOAA&Otter",
+        layer = "southern_seak_espg6394") %>%
+  st_transform(crs = 4326)
+
+```
+ 
+```{r}
+glimpse(pink.long)
+
+pink.loc <- unique(pink.long[c("SiteID", "EventID", "Location",
+                  "Lat1", "Long1", "Habitat")]) # 72 unique event IDs
+
+#write.csv(sal.location, "chp1_obj2_sites.csv")
+
+pink.sites <- pink.loc %>%
+  st_as_sf(coords = c("Long1", "Lat1"), crs = 4326)
+
+#st_write(sal.sites, "sal.sites.sf.shp")
+
+seak_crop <- seak_base %>%
+  st_crop(y = pink.sites)
+
+# how do we define regions?
+# i.e. where are the clusters of data?
+
+map.sites <- ggplot() +
+  geom_sf(data = seak_crop, mapping = aes(), color = "black") +
+  geom_sf(data = pink.sites, mapping = aes(color = Habitat)) +
+  geom_vline(xintercept = -132.5, linetype = "dashed", color = "red") +
+  labs(x = "Latitude", y = "Longitude")
+
+map.sites
+# based on this there looks like a good break would be 132.5W
+ktn.sites <- pink.loc %>%
+  filter(Long1 > -132.5) %>% # 14 sites
+  st_as_sf(coords = c("Long1", "Lat1"), crs = 4326)
+
+pow.sites <- pink.loc %>%
+  filter(Long1 < -132.5) %>% # 58 sites, this isn't the evenest  
+  st_as_sf(coords = c("Long1", "Lat1"), crs = 4326)
+
+```
+
+Now considering this breakdown of the region into two zones - are there differences in catch between those two areas? 
+
+```{r}
+ktn <- ktn.sites %>%
+  dplyr::select(SiteID, EventID) %>%
+  st_drop_geometry() %>%
+  mutate(region = "ktn")
+
+all <- pow.sites %>%
+  dplyr::select(SiteID, EventID) %>%
+  st_drop_geometry() %>%
+  mutate(region = "pow") %>%
+  rbind(ktn)
+
+pink.long.region <- left_join(pink.long, all)
+
+pink.long.region %>%
+  group_by(Habitat, region) %>%
+  dplyr::summarise(sd = sd(abundance),
+                   avg = mean(abundance)) %>%
+  ungroup() %>%
+  ggplot() +
+  geom_col(mapping = aes(x = Habitat, y = avg), color = "black") +
+  geom_errorbar(mapping = aes(x = Habitat, ymin = avg, ymax = avg + sd), width = 0.2) +
+  plot_theme() +
+  labs(y = "Average salmon abundance") +
+  facet_wrap(~region)
+# so the variability overall looks pretty different between pwo and ktn - is this variability consistent when you look across the different types of replicates? 
+
+pink.long.region %>%
+  group_by(Habitat, region, Mon) %>%
+  mutate(Mon = fct_relevel(Mon, c("Apr", "May", "Jun", "Jul"))) %>%
+  dplyr::summarise(sd = sd(abundance),
+                   avg = mean(abundance)) %>%
+  ggplot(mapping = aes(x = Mon, y = avg, fill = Habitat)) +
+  geom_col(position = position_dodge(0.9)) +
+  geom_errorbar(mapping = aes(x = Mon, ymin = avg, ymax = avg + sd), 
+                width = 0.2, position = position_dodge(0.9)) +
+  facet_wrap(~region)
+
+table(pink.long.region$region, pink.long.region$Habitat)
+
+# still a difference between region even tho the error bars are wonky - in addition we have stratification of sampling by month in the ktn area (and a big diff in n). All sampling in ktn happened in June. AND all the juvenile pink salmon occurred on the ketchikan side in june (none in pow)
+
+# what if we just looked at june
+pink.long.region %>%
+  filter(Mon == "Jun") %>%
+  group_by(Habitat, region) %>%
+  dplyr::summarise(sd = sd(abundance),
+                   avg = mean(abundance)) %>%
+  ggplot(mapping = aes(x = region, y = avg, fill = Habitat)) +
+  geom_col(position = position_dodge(0.9)) +
+  geom_errorbar(mapping = aes(x = region, ymin = avg, ymax = avg + sd), 
+                width = 0.2, position = position_dodge(0.9)) 
+```
+
+```{r}
+pink4 <- gam(abundance ~ Habitat + Mon + s(Lat1, Long1, k = 2), data = pink.long, 
+    family = "nb", method = "ML") # might be worth comparing the s versus te (tensoor field), if the k is unconstrained than with the s it takes k == 2 and te it takes 3
+
+summary(pink4) # a note about this, the smoothed term in this case (representative of the stratification of the sites) so in that way you shouldn't need to have random effect. 
+plot(pink4)
+variance_comp(pink4)
+
+gam.check(pink4) # okay so using the gam.check, it "indicates low p-value (k-index < 1) may indicate that k is too low, especially if edf is close to k" 
+
+pink4.3 <- gam(abundance ~ Habitat + Mon * s(Long1), data = pink.long, family = "nb", method = "ML")
+
+# so what if we increase the value of k (although Ole did indicate that we didn't want to get to complicated with the knots)
+# what if we include just the Longitude and look at that, especially because the sites weren't 
+pink4.1 <- gam(abundance ~ Habitat + Mon + s(Long1, k = 3), data = pink.long,
+              family = "nb", method = "ML")
+plot(pink4.1)
+summary(pink4.1)
+gam.check(pink4.1) # okay but does this even change? 
+
+# REVIEW ZURR OR SOMETHING ELSE ONLINE
+pink4.2 <- gam(abundance ~ Habitat + Mon + s(Long1, k = 3), data = pink.long,
+              family = "nb", method = "ML", correlation = corExp(form = ~Lat1 + Long1))
+#correlation=corSpher(form = ~ Latitude + Longitude)
+# this (above) is another way of fittting spatial correlation. 
+plot(pink4.2)
+summary(pink4.2)
+gam.check(pink4.2)
+pink.long$r1 <- resid(pink4.2)
+pink.long$r2 <- resid(pink1)
+
+g1 <-ggplot(aes(x = Long1, y = Lat1, color = r1), data = pink.long) +
+  geom_point() # spatial residuals of the model from gam 4.2 - compare to a model that doesn't have spatial structure
+g2<- ggplot(aes(x = Long1, y = Lat1, color = r2), data = pink.long) +
+  geom_point()
+# okay so honestly - these two plots don't look that different - if we saw clumps of positive and negative values then we would probably need to better account for spatial correlation. 
+
+library(patchwork)
+g1 + g2
+plot(Variogram(pink4.2, form = ~ Lat1 + Long1, 
+               resType = "normalized", data = pink.long))
+
+
+
+AIC(pink4); AIC(pink4.1) # 
+BIC(pink4); BIC(pink4.1)
+
+AIC(pink1); AIC(pink2); AIC(pink3); AIC(pink4); AIC(pink4.1)
+BIC(pink1); BIC(pink2); BIC(pink3); BIC(pink4); BIC(pink4.1) # based on BIC right now pink4 (habitat + s(doy) + s(lat,lon)
+```
+
+ 
+ 
+$$log(\mu) = (region|site) + habitat + month$$ 
+
+have to check the order of this
+- see ?gam.models for help documentation of how to fit nested terms
+
+```{r}
+# create a region variable
+pink.region <- pink.long %>%
+  mutate(region = ifelse(Long1 < -132.5, "pow", "ktn"))
+
+table(pink.region$region) # 14 in ktn and 58 in pow, definitely unequal sampling
+
+pink5 <- gam(abundance ~ Habitat + Mon + region + s(SiteID, bs = "re"), data = pink.region, 
+    family = "nb", method = "ML")
+
+summary(pink5)
+
+pink5.1 <- gam(abundance ~ Habitat + Mon * region + s(SiteID, bs = "re"), data = pink.region, 
+    family = "nb", method = "ML")
+
+summary(pink5.1) # okay so you see here egion and month are confounded because all of the sampling for the ktn side happened in june so... it makes me hesitant to parameterize a model with variation across space
+
+AIC(pink1); AIC(pink2); AIC(pink3); AIC(pink3.3); AIC(pink4); AIC(pink4.1); AIC(pink5)
+BIC(pink1); BIC(pink2); BIC(pink3); BIC(pink3.3); BIC(pink4); BIC(pink4.1); BIC(pink5)
+
+# what about comparing deviance explained? 
+summary(pink1); summary(pink2); summary(pink3); summary(pink4); summary(pink4.1); summary(pink5)
+
+pink6 <- gam(abundance ~ Habitat + doy + s(SiteID, bs = "re"), data = pink.region, 
+    family = "nb", method = "ML")
+
+AIC(pink6); BIC(pink6)
+AIC(pink3); BIC(pink3) # same AIC and BIC values
+
+```
+
+## pink candidate model table
+```{r}
+pink1; pink2; pink3; pink6
+pink4; pink4.1; pink5
+
+cand.models <- list() # create an empty list to include all the candidate models
+cand.models[[1]] <- pink1 # add in  models one at a time
+cand.models[[2]] <- pink2
+cand.models[[3]] <- pink3
+#cand.models[[4]] <- pink3.3
+#cand.models[[4]] <- pink4
+#cand.models[[5]] <- pink4.1
+#cand.models[[6]] <- pink5
+cand.models[[4]] <- pink6
+
+# Initially I included all the models that I parameterized in this but looking at the data more when we divde it by species the region is collinear with month because all the juvenile pink salmon that are caught are caught on the ketchikan side PLUS the ketchikan side was sampled only in June so it doesn't have representation from all months. Making it diff to model. Lets remove the spatial variance in the models
+# create vector with "model names" in this case, I'm including the formulas from each model (so I know whats in each one!)
+Modnames.all <- paste(c(formula(pink1), formula(pink2), formula(pink3), formula(pink3.3), formula(pink6)))
+```
+
+
+```{r}
+# create dataframe with model names. 
+cand.models
+
+d <- data.frame()
+for(i in 1:length(cand.models)) {
+  mod <- cand.models[[i]]
+  name <- paste(c(formula(mod)))
+  aic <- AIC(mod)
+  bic <- BIC(mod)
+  aicc <- AICc(mod)
+  df <- mod$df.null
+  sums <- summary(mod)
+  dev.expl <- sums$dev.expl*100
+  temp <- data.frame(model.names = name, df = df, dev.expl = dev.expl, AIC = aic, AICc = aicc, 
+                     BIC = bic)
+  d <- rbind(d, temp)
+}
+
+d.pink <- d %>%
+  arrange(BIC) %>%
+  mutate(delta.BIC = BIC - min(BIC),
+         delta.AIC = AIC - min(AIC),
+         delta.AICc = AICc - min(AICc)) %>%
+  mutate_if(is.numeric, round, digits = 2)
+
+d.pink <- d.pink %>%
+  dplyr::select(-c(df, AIC, delta.AIC))
+# okay for just pink salmon - looking at this table the model that has the lowest delta BIC and AIC is the one that includes: abundance ~ habitat + month + region + site(random effect). However it has one of the lower deviance explained compared to the other models - how does that work? 
+
+all.models <- as.data.frame(Modnames.all)
+```
+
+# Chum models
+So we want to experiment with a couple distributions - poisson and negative binomial
+
+$$log(\mu) = month + habitat + (1|site)$$
+```{r}
+require(mgcv)
+# Following up on this negbin versus nb
+# https://groups.google.com/g/r-help-archive/c/t1OFEPETjpc
+# this google conversation (answered by simon wood) - states that nb() defaults to REML for smoothing parameter estimation and negbin() defaultrs to UBRE unless method = "REML" is specified. 
+# this link also seems to indicate that negbin is treating theta was FIXED. 
+
+chum0.5 <- gam(abundance ~ s(SiteID, bs = "re"), family = "nb", data = chum.long, method = "ML")
+summary(chum0.5)
+variance_comp(chum0.5)
+
+# gam1 controls for both Month and Habitat, if we don't have month and habitat then you have all this variability among Sites. However if you do include Month (and Habitat) then the variances between sites is super low. 
+# what is the among site difference in average catch rate? When month included the site variance from the mean is super low. Month incorporates it
+
+chum1 <- gam(abundance ~ Habitat + Mon + s(SiteID, bs = "re"), family = "nb", data = chum.long, 
+            method = "ML")
+summary(chum1)
+AIC(chum1); BIC(chum1) # when using smoothed random effect at least the AIC looks better
+# average april catch in eelgrass
+# april and may catch rates about the same, then drop off progressively across june, july
+
+# what do the residuals look like? 
+gam.check(chum1) 
+```
+So to conclude all of that commented information - we'll need to compare models that were all fit using the same package {mgcv}
+And make sure to use the nb family because that one estimates theta 
+
+
+Lets do a quick look at comparing models with and without the random intercept
+(based on page 123 of the penguin book)
+```{r}
+chum.re <- gam(abundance ~ 1 + Mon + Habitat, family = "nb", data = chum.long)
+chum.re1 <- gam(abundance ~ 1 + Mon + Habitat + s(SiteID, bs = "re"), family = "nb", data = chum.long)
+
+# this is testing the random effects structure and includes: 
+# no random term (gam.re)
+# random intercept
+
+AIC(chum.re); AIC(chum.re1)
+BIC(chum.re); BIC(chum.re1)
+
+# is there a chance that because the random effects explains so little of the variation that it does not make sense to include in the model? 
+
+```
+
+
+$$log(\mu) = habitat + (1|site) + (1|month)$$
+
+```{r}
+# ?gam.models
+# what if we tried fitting these with gam and use re 
+# make sure SiteID and Mon are factors
+chum.long$SiteID <- as.factor(chum.long$SiteID)
+chum.long$Mon <- as.factor(chum.long$Mon)
+
+chum2 <- gam(abundance ~ Habitat + s(SiteID, bs = "re") + s(Mon, bs = "re"), family = "nb", data = chum.long, method = "ML")
+# s(site, bs = "re")
+# (0 + grass | site) -> s(site, grass, bs="re"), varying with the slope of some term
+library(gratia)
+variance_comp(chum2) # treating both month and site as random intercepts, 
+# if we have a normal distribution of the random effects - the variance in the variance_comp is the SD (width of tails)
+# of the individual sites. So the SiteID variance is less than month for sure, but not as minimal with all species included. When month is re than more variabilitiy of month compared to sites. 
+
+variance_comp(chum1) # this is treating month as fixed, and site as re; some variacne between sites not unreasonably low. 
+
+d3 <- chum.long %>%
+  group_by(SiteID) %>%
+  dplyr::summarise(means = mean(log(abundance+1))) # what is going on with the low variance amongst sites?
+
+hist(d3$means)
+
+summary(chum2)
+# Okay notes about incorporating random effects for both Site and Mon
+# using gamm doesn't seem to want to fit having two random intercepts for site and month
+# by including month as a random effect that means you're not looking at the effect of month
+# QUESTION - how do I specify (and make sure) that its a random intercept not slope? 
+
+# other notes: 
+# if the variable (site and mon) are factors that s(factor, bs = "re) produces a random coefficient for each level of g. With each coefficient as iid nomral. 
+# if you make it s(x, g, bs = "re") and x is numeric and g is a factor then its an iid normal random SLOPE relating the response of X for EACH LEVEL OF G. 
+# if we have g and h as factors then s(h, g, bs = "re") produces the usually iid normal g-h interaction. 
+
+summary(chum2) 
+# if you note the theta for this is estimated at 0.152
+AIC(chum2); AIC(chum1); AIC(chum0.5)
+BIC(chum2); BIC(chum1); BIC(chum0.5)
+# note that the gamm object (that is divided into two parts) does not produce a AIC or BIC for the gam component
+# QUESTION: so what is the best way to compare these models? And what is the best form to do that in? 
+```
+
+
+$$log(\mu) = habitat + (1|site) + s(month)$$
+
+Note here months have to be continuous
+```{r}
+
+chum3 <- gam(abundance ~ Habitat + s(doy, k = 3) + s(SiteID, bs = "re"), data = chum.long, family = "nb", method = "ML")
+
+summary(chum3) # the edf is close to 1 and the residual plots make it look linear and paired with the non-continuous sampling of the sites month is probably best parameterized as a linear term with MONTH AS FACTOR (gaps in between)
+plot(chum3)# sothis one is nearly linear but still hav some wiggliness in it
+variance_comp(chum3)
+
+variance_comp(chum0.5)
+variance_comp(chum1)
+
+# what about including doy as a linear fixed effect
+chum3.2 <- gam(abundance ~ Habitat + doy + s(SiteID, bs = "re"), data = chum.long, family = "nb", method = "ML")
+summary(chum3.2)
+
+# what about including doy as a linear fixed effect with a quadratic
+chum3.3 <- gam(abundance ~ Habitat + doy + I(doy^2) + s(SiteID, bs = "re"), data = chum.long, family = "nb", method = "ML")
+summary(chum3.3)
+
+AIC(chum1); AIC(chum2); AIC(chum3); AIC(chum3.2); AIC(chum3.3)
+BIC(chum1); BIC(chum2); BIC(chum3); BIC(chum3.2); BIC(chum3.3)
+```
+Its probably not great to include month as a random effect here because there is only 4 and there should be at least 5. 
+The variance is likely not easily calculated for Month
+
+
+## Chum variation in space
+
+$$log(\mu) = (1|site) + month + habitat$$
+**Note** this is the same model as pink1 so it wont be repeated here
+
+$$log(\mu) = s(lat,lon) + month + habitat$$
+**Note** only do this if there is a pattern across space
+
+So first we need to check if there is a pattern across space
+ I'd visualize this as some kind of map with little histograms by site location. 
+```{r}
+library(sf)
+# read in spatial dataframe
+seak_base <- st_read(dsn = "../Maps_NOAA&Otter",
+        layer = "southern_seak_espg6394") %>%
+  st_transform(crs = 4326)
+
+```
+ 
+```{r}
+glimpse(chum.long)
+
+chum.loc <- unique(chum.long[c("SiteID", "EventID", "Location",
+                  "Lat1", "Long1", "Habitat")]) # 72 unique event IDs
+
+#write.csv(sal.location, "chp1_obj2_sites.csv")
+
+chum.sites <- chum.loc %>%
+  st_as_sf(coords = c("Long1", "Lat1"), crs = 4326)
+
+#st_write(sal.sites, "sal.sites.sf.shp")
+
+seak_crop <- seak_base %>%
+  st_crop(y = chum.sites)
+
+# how do we define regions?
+# i.e. where are the clusters of data?
+
+map.sites <- ggplot() +
+  geom_sf(data = seak_crop, mapping = aes(), color = "black") +
+  geom_sf(data = sal.sites, mapping = aes(color = Habitat)) +
+  geom_vline(xintercept = -132.5, linetype = "dashed", color = "red") +
+  labs(x = "Latitude", y = "Longitude")
+
+map.sites
+# based on this there looks like a good break would be 132.5W
+ktn.sites <- sal.location %>%
+  filter(Long1 > -132.5) %>% # 14 sites
+  st_as_sf(coords = c("Long1", "Lat1"), crs = 4326)
+
+pow.sites <- sal.location %>%
+  filter(Long1 < -132.5) %>% # 58 sites, this isn't the evenest  
+  st_as_sf(coords = c("Long1", "Lat1"), crs = 4326)
+
+```
+
+Now considering this breakdown of the region into two zones - are there differences in catch between those two areas? 
+
+```{r}
+ktn <- ktn.sites %>%
+  dplyr::select(SiteID, EventID) %>%
+  st_drop_geometry() %>%
+  mutate(region = "ktn")
+
+all <- pow.sites %>%
+  dplyr::select(SiteID, EventID) %>%
+  st_drop_geometry() %>%
+  mutate(region = "pow") %>%
+  rbind(ktn)
+
+sal.long.region <- left_join(sal.long, all)
+
+sal.long.region %>%
+  group_by(Habitat, region) %>%
+  dplyr::summarise(sd = sd(abundance),
+                   avg = mean(abundance)) %>%
+  ungroup() %>%
+  ggplot() +
+  geom_col(mapping = aes(x = Habitat, y = avg), color = "black") +
+  geom_errorbar(mapping = aes(x = Habitat, ymin = avg, ymax = avg + sd), width = 0.2) +
+  plot_theme() +
+  labs(y = "Average salmon abundance") +
+  facet_wrap(~region)
+# so the variability overall looks pretty different between pwo and ktn - is this variability consistent when you look across the different types of replicates? 
+
+sal.long.region %>%
+  group_by(Habitat, region, Mon) %>%
+  mutate(Mon = fct_relevel(Mon, c("Apr", "May", "Jun", "Jul"))) %>%
+  dplyr::summarise(sd = sd(abundance),
+                   avg = mean(abundance)) %>%
+  ggplot(mapping = aes(x = Mon, y = avg, fill = Habitat)) +
+  geom_col(position = position_dodge(0.9)) +
+  geom_errorbar(mapping = aes(x = Mon, ymin = avg, ymax = avg + sd), 
+                width = 0.2, position = position_dodge(0.9)) +
+  facet_wrap(~region)
+
+table(sal.long.region$region, sal.long.region$Habitat)
+
+# still a difference between region even tho the error bars are wonky - in addition we have stratification of sampling by month in the ktn area (and a big diff in n). All sampling in ktn happened in June. 
+```
+
+```{r}
+chum4 <- gam(abundance ~ Habitat + Mon + s(Lat1, Long1, k = 2), data = chum.long, 
+    family = "nb", method = "ML") # might be worth comparing the s versus te (tensoor field), if the k is unconstrained than with the s it takes k == 2 and te it takes 3
+
+summary(chum4) # a note about this, the smoothed term in this case (representative of the stratification of the sites) so in that way you shouldn't need to have random effect. 
+plot(chum4)
+variance_comp(chum4)
+
+gam.check(chum4) # okay so using the gam.check, it "indicates low p-value (k-index < 1) may indicate that k is too low, especially if edf is close to k" 
+
+chum4.3 <- gam(abundance ~ Habitat + Mon * s(Long1), data = chum.long, family = "nb", method = "ML")
+
+# so what if we increase the value of k (although Ole did indicate that we didn't want to get to complicated with the knots)
+# what if we include just the Longitude and look at that, especially because the sites weren't 
+chum4.1 <- gam(abundance ~ Habitat + Mon + s(Long1, k = 3), data = chum.long,
+              family = "nb", method = "ML")
+plot(chum4.1)
+summary(chum4.1)
+gam.check(chum4.1) # okay but does this even change? 
+
+# REVIEW ZURR OR SOMETHING ELSE ONLINE
+chum4.2 <- gam(abundance ~ Habitat + Mon + s(Long1, k = 3), data = chum.long,
+              family = "nb", method = "ML", correlation = corExp(form = ~Lat1 + Long1))
+#correlation=corSpher(form = ~ Latitude + Longitude)
+# this (above) is another way of fittting spatial correlation. 
+plot(chum4.2)
+summary(chum4.2)
+gam.check(chum4.2)
+chum.long$r1 <- resid(chum4.2)
+chum.long$r2 <- resid(chum4.2)
+
+g1 <-ggplot(aes(x = Long1, y = Lat1, color = r1), data = chum.long) +
+  geom_point() # spatial residuals of the model from gam 4.2 - compare to a model that doesn't have spatial structure
+g2<- ggplot(aes(x = Long1, y = Lat1, color = r2), data = chum.long) +
+  geom_point()
+# okay so honestly - these two plots don't look that different - if we saw clumps of positive and negative values then we would probably need to better account for spatial correlation. 
+
+library(patchwork)
+g1 + g2
+plot(Variogram(chum4.2, form = ~ Lat1 + Long1, 
+               resType = "normalized", data = chum.long))
+
+
+
+AIC(chum4); AIC(chum4.1) # 
+BIC(chum4); BIC(chum4.1)
+
+AIC(chum1); AIC(chum2); AIC(chum3); AIC(chum4); AIC(chum4.1)
+BIC(chum1); BIC(chum2); BIC(chum3); BIC(chum4); BIC(chum4.1) # based on BIC right now pink4 (habitat + s(doy) + s(lat,lon)
+```
+
+ 
+ 
+$$log(\mu) = (region|site) + habitat + month$$ 
+
+have to check the order of this
+- see ?gam.models for help documentation of how to fit nested terms
+
+```{r}
+# create a region variable
+chum.region <- chum.long %>%
+  mutate(region = ifelse(Long1 < -132.5, "pow", "ktn"))
+
+table(chum.region$region) # 14 in ktn and 58 in pow, definitely unequal sampling
+
+chum5 <- gam(abundance ~ Habitat + Mon + region + s(SiteID, bs = "re"), data = chum.region, 
+    family = "nb", method = "ML")
+
+summary(chum5)
+
+AIC(chum1); AIC(chum2); AIC(chum3); AIC(chum4); AIC(chum4.1); AIC(chum5)
+BIC(chum1); BIC(chum2); BIC(chum3); BIC(chum4); BIC(chum4.1); BIC(chum5)
+
+# what about comparing deviance explained? 
+summary(chum1); summary(chum2); summary(chum3); summary(chum4); summary(chum4.1); summary(chum5)
+
+chum6 <- gam(abundance ~ Habitat + doy + s(SiteID, bs = "re"), data = chum.region, 
+    family = "nb", method = "ML")
+
+AIC(chum6); BIC(chum6)
+AIC(chum3); BIC(chum3) # These models have slightly different AIC and BIC values
+
+```
+
+# chum candidate model table
+```{r}
+cand.models <- list() # create an empty list to include all the candidate models
+cand.models[[1]] <- chum1 # add in  models one at a time
+cand.models[[2]] <- chum2
+cand.models[[3]] <- chum3
+cand.models[[4]] <- chum3.2
+#cand.models[[5]] <- chum3.3
+#cand.models[[6]] <- chum4
+#cand.models[[7]] <- chum4.1
+#cand.models[[8]] <- chum5
+#cand.models[[6]] <- chum6
+
+# create vector with "model names" in this case, I'm including the formulas from each model (so I know whats in each one!)
+Modnames.all <- paste(c(formula(chum1), formula(chum2), formula(chum3), formula(chum3.2)))
+```
+
+
+```{r}
+# create dataframe with model names. 
+cand.models
+
+d <- data.frame()
+for(i in 1:length(cand.models)) {
+  mod <- cand.models[[i]]
+  name <- paste(c(formula(mod)))
+  aic <- AIC(mod)
+  aicc <- AICc(mod)
+  bic <- BIC(mod)
+  df <- mod$df.null
+  sums <- summary(mod)
+  dev.expl <- sums$dev.expl*100
+  temp <- data.frame(model.names = name, df = df, dev.expl = dev.expl, AIC = aic, 
+                     AICc = aicc, BIC = bic)
+  d <- rbind(d, temp)
+}
+
+d.chum <- d %>%
+  arrange(BIC) %>%
+  mutate(delta.BIC = BIC - min(BIC),
+         delta.AIC = AIC - min(AIC),
+         delta.AICc = AICc - min(AICc)) %>%
+  mutate_if(is.numeric, round, digits = 2)
+
+# okay for just pink salmon - looking at this table the model that has the lowest delta BIC and AIC is the one that includes: abundance ~ habitat + month + region + site(random effect). However it has one of the lower deviance explained compared to the other models - how does that work? 
+
+all.models <- as.data.frame(Modnames.all)
+```
+
+
+Looking at the two sets of candidate models:
+d.pink
+d.chum
+
+```{r}
+d.pink # for the pink salmon species model - the best model includes habitat + doy + site (re)
+# it is the same as the model that includes doy as a smoothed parameter because the edf for that is 1 (meaning its linear). Honestly once you remove thinking about region there's only a few ways we can include variation between sites and across months and functionally all the candidate models are the same. 
+
+d.chum # the best model for chum salmon abundance ~ Habitat + s(doy) + random effect of site
+summary(chum3) # one thing to note about this model is that the edf is 1.76 
+plot(chum3) # the smoothed doy declines then evens out at a low number 
+plot(chum3.3)
+# The other option for parameterizing month is to include month as a fixed effect and categorical 
+summary(chum1)
+variance_comp(chum1) # the variance comp for both these models and both these parameters are relatively low
+variance_comp(chum3)
+variance_comp(chum3.3)
+
+gam.check(chum3)
+gam.check(chum1)
+gam.check(chum3.3)
+plot(pink3)
+```
+
+# Visualizing best pink model
+```{r}
+# best model from 
+d.pink
+summary(pink3.3) # this model whenfit with REML is super wonky lets go with the second best that doesn't have the quadratic doy and just the linear cause the s(doy) indicates its linear too
+summary(pink6)
+
+#write.csv(d.pink, "Data/model-selection-chp1obj1-pink.csv")
+```
+
+```{r}
+par(mfrow=c(1,1))
+visreg(pink3.3)
+
+pink.final <- gam(abundance ~ Habitat + doy + s(SiteID, bs = "re"), data = pink.long, 
+    family = "nb", method = "REML")
+summary(pink.final)
+# what do I use for doy? Maybe the median or average value?
+ggplot(pink.long) +
+  geom_point(aes(x = doy, y = abundance, color = Habitat)) # so there's some clustering around 133/134/135 doy 
+table(pink.long$doy)
+# and that corresponds with May - the average doy sampled is 156, but there's no samples around then so I'm not sure it'll work
+
+# okay so for predicting random effects models likely you want to predict to the "average" site - so you might not include it in the predict fucntion. 
+# pink5 uses the pink.long dataframe and includes habitat month and site and region
+pr.hab <- predict.gam(pink.final, newdata = data.frame(Habitat = unique(pink.long$Habitat), doy = 135, SiteID = "136"), se.fit = TRUE, exclude="s(SiteID, bs = 're')")
+
+pr.doy <- predict.gam(pink.final, newdata = data.frame(Habitat = "Eelgrass", doy = seq(104, 198, 1), SiteID = "136"), se.fit = TRUE, exclude="s(SiteID, bs = 're')")
+
+pred <- exp(pr.hab$fit) 
+lwr <- exp(pr.hab$fit - (1.96*pr.hab$se.fit))
+upr <- exp(pr.hab$fit + (1.96*pr.hab$se.fit))
+
+pred.m <- exp(pr.doy$fit)
+lwr.m <- exp(pr.doy$fit - (1.96*pr.doy$se.fit))
+upr.m <- exp(pr.doy$fit + (1.96*pr.doy$se.fit))
+
+pink.long$Habitat <- as.character(pink.long$Habitat)
+
+pr.hab.df <- data.frame(cbind(pred, lwr, upr, unique(pink.long$Habitat))) %>%
+  dplyr::rename(Habitat = V4) %>%
+  mutate(fit = as.numeric(pred),
+         lwr = as.numeric(lwr),
+         upr = as.numeric(upr))
+
+pink.long$Mon <- as.character(pink.long$Mon)
+
+pr.doy.df <- data.frame(cbind(pred.m, lwr.m, upr.m, seq(104, 198, 1))) %>%
+  dplyr::rename(doy = V4) %>%
+  mutate(fit = as.numeric(pred.m),
+         lwr = as.numeric(lwr.m),
+         upr = as.numeric(upr.m))
+```
+
+Now put it together
+```{r}
+hab <- ggplot(pr.hab.df) +
+  geom_col(aes(x = Habitat, y = log(fit+1)), fill = "lightgray") +
+  geom_errorbar(aes(x = Habitat, ymax = log(fit+1) + log(upr+1), ymin = log(fit+1) - log(lwr+1)), width = 0.2) +
+  geom_jitter(data = pink.long, aes(x = Habitat, y = log(abundance + 1))) +
+  ylim(c(-0.1, 20)) +
+  plot_theme() +
+  labs(y = "Log Average Pink Salmon (#/seine)")
+hab
+
+#okay doy isn't really working because the confidence interval predicted is so large it makes it hard to see the pattern in doy
+doy <- ggplot(pr.doy.df) +
+  geom_ribbon(aes(x = doy, ymax = log(fit+1) + log(upr+1), ymin = log(fit+1) - log(lwr+1)), fill = "lightgray") +
+  geom_line(aes(x = doy, y = log(fit+1)), color = "black") + 
+  geom_point(data = pink.long, aes(x = doy, y = log(abundance+1))) +
+  ylim(c(-0.1, 20)) +
+  plot_theme() +
+  labs(x = "Day of year", y = NULL) 
+doy
+
+gam.plot <- hab + doy + plot_annotation(tag_levels="a")
+```
+
+## interium visreg version
+```{r}
+summary(pink.final) # okay so none of the time is significant. But there is a significant random effect term - what does that mean? 
+
+pink.hab <- visreg(pink.final, "Habitat", 
+       scale = "response", gg = TRUE, rug = F, partial = F) +
+  xlab("Habitat") +
+  ylab("Average Pink Salmon per seine") +
+  plot_theme() + 
+  #ylab(NULL) + 
+  coord_cartesian(ylim = c(0,3000)) +
+  geom_jitter(data = pink.long, aes(x = Habitat, y = abundance))
+pink.hab
+
+pink.doy <- visreg(pink.final, "doy", 
+       scale = "response", gg = TRUE, rug = F, partial = F) + 
+  xlab("Day of year") +
+  ylab(NULL) +
+  plot_theme() + 
+  coord_cartesian(ylim = c(0,3000)) +
+  geom_point(data = pink.long, aes(x = doy, y = abundance))
+pink.doy
+
+pink.hab + pink.doy +
+  plot_annotation(tag_levels="a")
+
+```
+ 
+
+# Visualize best chum model
+## interium visreg
+```{r}
+d.chum
+summary(chum3.3)
+
+#write.csv(d.chum, "Data/model-selection-chp1obj1-chum.csv")
+```
+
+```{r}
+summary(chum3)
+chum.final <- gam(abundance ~ Habitat + s(doy, k = 3) + s(SiteID, bs = "re"), data = chum.long, family = "nb", method = "REML")
+summary(chum.final)
+
+chum.hab <- visreg(chum.final, "Habitat", 
+       scale = "response", gg = TRUE, rug = F, partial = F) + 
+  xlab("Habitat") +
+  ylab("Average Chum Salmon per seine") +
+  plot_theme() #+ 
+  #coord_cartesian(ylim = c(0,250))
+    #geom_point(data = fish, aes(x = avg_density, y = SALCHUM))
+chum.hab
+
+chum.doy <- visreg(chum.final, "doy", 
+       scale = "response", gg = TRUE, rug = F, partial = F) + 
+  xlab("Day of year") +
+  ylab(NULL) +
+  plot_theme() + 
+  coord_cartesian(ylim = c(0,250)) +
+  geom_point(data = chum.long, aes(x = doy, y = abundance))
+chum.doy
+
+chum.hab + chum.doy +
+  plot_annotation(tag_levels="a")
+```
+
+## final chum visualize (using predict)
+```{r}
+# what do we include for doy
+ggplot(chum.long) +
+  geom_point(aes(x = doy, y = abundance, color = Habitat)) # so there's some clustering around 133/134/135 doy and the 160 but since we used 135 for above we should use it here too
+table(chum.long$doy) # 135 seems reasonable
+
+# okay so for predicting random effects models likely you want to predict to the "average" site - so you might not include it in the predict fucntion. 
+# pink5 uses the pink.long dataframe and includes habitat month and site and region
+pr.habc <- predict.gam(chum.final, newdata = data.frame(Habitat = unique(chum.long$Habitat), doy = 135, SiteID = "136"), se.fit = TRUE, exclude="s(SiteID, bs = 're')")
+
+pr.doyc <- predict.gam(chum.final, newdata = data.frame(Habitat = "Eelgrass", doy = seq(104, 198, 1), SiteID = "136"), se.fit = TRUE, exclude="s(SiteID, bs = 're')")
+
+pred <- exp(pr.habc$fit) 
+lwr <- exp(pr.habc$fit - (1.96*pr.habc$se.fit))
+upr <- exp(pr.habc$fit + (1.96*pr.habc$se.fit))
+
+pred.m <- exp(pr.doyc$fit)
+lwr.m <- exp(pr.doyc$fit - (1.96*pr.doyc$se.fit))
+upr.m <- exp(pr.doyc$fit + (1.96*pr.doyc$se.fit))
+
+chum.long$Habitat <- as.character(chum.long$Habitat)
+
+pr.habc.df <- data.frame(cbind(pred, lwr, upr, unique(chum.long$Habitat))) %>%
+  dplyr::rename(Habitat = V4) %>%
+  mutate(fit = as.numeric(pred),
+         lwr = as.numeric(lwr),
+         upr = as.numeric(upr))
+
+chum.long$Mon <- as.character(chum.long$Mon)
+
+pr.doyc.df <- data.frame(cbind(pred.m, lwr.m, upr.m, seq(104, 198, 1))) %>%
+  dplyr::rename(doy = V4) %>%
+  mutate(fit = as.numeric(pred.m),
+         lwr = as.numeric(lwr.m),
+         upr = as.numeric(upr.m))
+```
+Now put it together
+```{r}
+habc <- ggplot(pr.habc.df) +
+  geom_col(aes(x = Habitat, y = log(fit+1)), fill = "lightgray") +
+  geom_errorbar(aes(x = Habitat, ymax = log(fit+1) + log(upr+1), ymin = log(fit+1) - log(lwr+1)), width = 0.2) +
+  geom_jitter(data = chum.long, aes(x = Habitat, y = log(abundance+1))) +
+  ylim(c(-0.1, 7)) +
+  plot_theme() +
+  labs(y = "Log Average Chum Salmon (#/seine)")
+habc
+
+# now doy
+doyc <- ggplot(pr.doyc.df) +
+  geom_ribbon(aes(x = doy, ymax = log(fit+1) + log(upr+1), ymin = log(fit+1) - log(lwr+1)), fill = "lightgray") +
+  geom_line(aes(x = doy, y = log(fit+1)), color = "black") + 
+  geom_point(data = chum.long, aes(x = doy, y = log(abundance+1))) +
+  ylim(c(-0.1, 7)) +
+  plot_theme() +
+  labs(x = "Day of year", y = NULL) 
+doyc
+
+gam.chum.plot <- habc + doyc + plot_annotation(tag_levels="a")
+```
+ ### anova pink tbl
+```{r}
+library(sjPlot)
+summary(pink.final)
+summary(chum.final)
+tab_model(chum.final, pink.final,
+          dv.labels = c("Juvenile Chum Salmon", "Juvenile Pink Salmon"),
+          show.est = TRUE, string.est = "Estimate", show.r2 = FALSE,
+          show.stat = TRUE, string.stat = "Statistic",
+          show.se = TRUE, show.ci = FALSE, string.p = "P-Value",
+          string.se = "Standard Error", p.style = "numeric",
+           pred.labels = c("Intercept", "Habitat [kelp]","Non-linear date", 
+                           "Site (random)", "Date"))
+```
+
+
+```{r}
+test <- pink.long %>%
+  group_by(SiteID, EventID, Habitat) %>%
+  dplyr::summarise(sum(abundance))
+
+
+test2 <- chum.long %>%
+  group_by(SiteID, EventID, Habitat) %>%
+  dplyr::summarise(sum(abundance))
+```
+

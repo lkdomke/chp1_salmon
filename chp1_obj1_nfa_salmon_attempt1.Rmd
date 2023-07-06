@@ -1,0 +1,1163 @@
+---
+title: "chp1_obj1_nfa_salmon"
+author: "Lia Domke"
+date: "4/10/2023"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Alternative analysis we could do
+
+Okay going back through this analysis when trying to write the discussion I noticed a problem with the shorezone/NFA analysis:
+
+- I'm only using presence only data (I've dropped the zeros in the dataframe). I think this was **okay** but not great. I made sure to talk about it as, "when salmon are present, where are they". 
+
+- However, the seines that I'm basing the analysis on already include a "lack of randomness" by sampling explicitly in each habitat type; so it doesn't really make sense to include the proportion of coastline that each habitat occupies... 
+
+- There are repeat sampling events that are unaccount for right now. 
+
+
+**To fix this I'm proposing a new analysis:**
+
+Model form: 
+
+counts (all species) ~ habitat + 1|siteID
+
+- could also include a species specific interation term (sp_code)
+
+Other possible terms I could incldue: julian day or month, julian day^2, year
+Initially I will be doing this without julian day because the resampling was done on a yearly or monthly basis
+
+One final issue - I think I've tried the model form above and things get complicated fast. These type of data definitely require non-Gaussian approach so I have to use generalized linear mixed models (likely w/ a neg biomial distribution). I've tried looking at some of the negbin and zero inflated models but none of the models quite look right. 
+
+In addition this is pretty similar to my mixed models using pink salmon in vegetated and unvegetated habitat. 
+
+# *Concluding questions*
+
+- Basically in the end of all of this: is there a way to incorporate some of the shorezone data in order to get at this preference question? And potentially use it to extrapolate out to expectations for unsampled sites? 
+
+- We know that salmon are ephemeral in these areas - do we care when they are absent? (yes?)
+
+- Can we look at the positive only data? (caveat - just looking at the number of seines with and without salmon - there's a lot more eelgrass seines in general and about half of them have salmon whereas 23 of the 28 seines in kelp have salmon). 
+
+- Is using any of these approaches valid?
+
+
+# Approach considering above issues
+
+Okay so considering all the above complexities I have a couple new approaches (March 23, 2023)
+I have two analysis I want to do and contain within this script file: 
+
+First step is to do some data cleaning --> we need to pull out repeat site sampling (so that each site is only sampled once). Ideally this should be done by month (including May - July, perhaps some April) so that there are even occurrences (approximately) by months
+
+1. Analysis of 0s and 1s asking: 
+
+  - are there different catch rates in eelgrass and kelp 
+  
+      - incorporate average number of salmon/seine 
+      
+      - use t-tests (if normal) to test difference in the average number of salmon/seine
+      
+      - use glm's to include the interaction of month * habitat
+
+2. When positive (1s + )
+  
+  - is there a difference in salmon (avg salmon/seine) by habitat type? 
+  
+      - t-test 
+      
+      - glms to include interaction of month * habitat
+
+
+```{r message=FALSE, warning=FALSE}
+library(rgdal)
+library(ggplot2)
+library(rgeos)
+library(raster)
+library(maptools)
+library(sf)
+library(dplyr)
+library(tidyr)
+library(forcats) # for fct_relevel
+library(kableExtra)
+library(MASS) # for glm.nb
+library(lmtest) # for lrtest
+library(glmmTMB) # for glmmTMB
+library(DHARMa) # residual checking for glmmTMB models
+library(visreg)
+```
+
+```{r theme settings, include=FALSE}
+# Creates custom base plot theme that can adjust every graph that you use plot_theme for! First create custom plot theme
+
+plot_theme <- function() {
+  theme_bw(base_size = 24, base_family = "Helvetica") %+replace%
+    theme(panel.background  = element_blank(),
+            plot.background = element_rect(fill="transparent", colour=NA), 
+            legend.background = element_rect(fill="transparent", colour=NA),
+            legend.key = element_rect(fill="transparent", colour=NA),
+            panel.grid.major = element_blank(), 
+            panel.grid.minor = element_blank())
+}
+
+# to use ggsave and export plots include argument 'device=cario_pdf' e.g.: 
+# ggsave("name.pdf", device=cairo_pdf, width = 6, height = 6)
+```
+
+### Cleaning salmon data
+Initially lets just use data from the Nearshore Atlas seines
+We want to make sure we're only including data from the SESO region and that we look at seines that occurred between April and July (based on when salmon outmigrated in 2017). We also only want seines that happened in eelgrass and understory kelp habitats. 
+
+```{r data, include=FALSE}
+seso <- read.csv("Data/noaa_region_seso.csv", stringsAsFactors=FALSE, header = TRUE)
+```
+
+
+1. Fix incorrect species
+
+```{r include=FALSE}
+unique(seso$taxon)
+unique(seso$Sp_CommonName) # there are a couple of non fish species, 93 unique species 
+
+incor <- c("SHRMGRA", "BSNAILW", "CRABHEL", "JLYMOON", "JLYCLNG", "TUNICAT", "SHRMDOC", "STARLEA", "SHRMSTI",
+           "SHRMSPO", "CRABHER", "SHRMHIP", "ISOPODG", "CRABGD", "CRABDUN", "SHRMCR", "ISOPODC", "SHRMCOO",
+           "CRABGKE", "UNMYSID", "CRABNKE", "NUDOPAL", "NUDHOOD")
+
+seso_fish <- seso %>%
+  mutate(taxon = ifelse(SpCode %in% incor, "invertebrate", taxon)) %>%
+  filter(taxon == "fish") %>%
+    filter(Habitat == "Eelgrass"| Habitat == "Kelp")
+
+#unique(seso_fish$Sp_CommonName) # now only 70 
+```
+
+2. Filter by habitat
+
+```{r include=FALSE}
+glimpse(seso_fish)
+
+seso_fish_sub <- seso_fish %>%
+  filter(Mon == "Jul" | Mon == "Apr" | Mon == "Jun" | Mon == "May")
+
+sites_by_event <- unique(seso_fish_sub[c("SiteID", "EventID","Habitat", "Date", "Mon", "Year", "Locale", "Location")])
+
+```
+
+```{r}
+seso_sal <- seso_fish %>%
+  filter(Gear == "BSEINE") %>%
+  filter(SpCode == "SALSOCK"| SpCode == "SALCHIN" | SpCode == "SALPINK"| 
+           SpCode == "SALCOHO" | SpCode == "SALCHUM")
+```
+
+
+# Sites sampled by habitat
+```{r}
+glimpse(seso_sal) # sites sampled with salmon
+
+unique(seso_sal[c("SiteID", "EventID", "Date", "Mon", "Year", "Locale", "Location", "SubLocale", "Habitat")]) %>%
+  arrange(SiteID)
+
+glimpse(seso_fish_sub) # all sites
+unique(seso_fish_sub[c("SiteID", "EventID", "Date", "Mon", "Year", "Locale", "Location", "SubLocale", "Habitat")]) %>%
+  arrange(SiteID)
+```
+
+Okay based on this there are several sites that were sampled mulitple times
+
+- 131 : May, april, June 1998 (eelgrass)
+
+- 132 : May, April, June 1998 (eelgrass) 
+
+- 135 : April, May, June, July 1998 (eelgrass)
+
+- 136 : April, May, June, July 1998 (eelgrass)
+
+- 137 : April, May, June, 1998 (eelgrass)
+
+- 138 : April, May, June 1998 (eelgrass)
+
+- 139 : April, May, June, July, 1998 (kelp)
+
+- 140: April, May, June, July 1998 (kelp)
+ 
+- 141: April, May, June, July 1998 (eelgrass)
+ 
+- 142: April, May, June, July 1998 (eelgrass)
+ 
+- 145: May, June, July 1998 (kelp)
+ 
+- 146: May, June, July 1998 (kelp)
+
+```{r}
+# when do we catch salmon
+seso_fish_sub %>%
+  filter(SpCode %in% c("SALCOHO", "SALPINK", "SALCHUM", "SALCHIN", "SALSOCK")) %>%
+  mutate(abundance = ifelse(is.na(Length), Unmeasured, 1)) %>%
+  mutate(Mon = factor(Mon, levels = c("Apr", "May", "Jun", "Jul"))) %>%
+  ggplot() +
+  geom_col(aes(x = Mon, y = abundance, fill = SpCode)) + plot_theme() # okay we want to catch when salmon are around so we want to keep the smaple dates that have salmon
+
+# what sites did we catch those fish at?
+seso_fish_sub %>%
+  filter(SpCode %in% c("SALCOHO", "SALPINK", "SALCHUM", "SALCHIN", "SALSOCK")) %>%
+  mutate(abundance = ifelse(is.na(Length), Unmeasured, 1)) %>%
+  mutate(Mon = factor(Mon, levels = c("Apr", "May", "Jun", "Jul"))) %>%
+  ggplot() +
+  geom_col(aes(x = Mon, y = abundance, fill = as.factor(EventID))) + plot_theme() 
+
+seso_fish_sub %>%
+  filter(SpCode %in% c("SALCOHO", "SALPINK", "SALCHUM", "SALCHIN", "SALSOCK")) %>%
+  mutate(abundance = as.numeric(ifelse(is.na(Length), paste(Unmeasured), 1))) %>%
+  dplyr::summarise(total = sum(abundance)) # 11928 fish caught
+```
+
+
+```{r}
+# need to subset the eventIDs
+eventIds<- seso_fish_sub %>%
+  dplyr::select(c(SiteID, EventID, Mon, Habitat, Date)) %>%
+  distinct()
+
+table(eventIds$Habitat) # need to drop like 16 event IDs
+table(eventIds$Mon, eventIds$Habitat)
+
+# replicate sseines
+rep <- c(131, 132, 135, 136, 137, 138, 139, 140, 141, 142, 145, 146) # replicate site ID numbers
+
+seso_fish_sub %>%
+  subset(SiteID %in% rep) %>%
+  filter(SpCode %in% c("SALCOHO", "SALPINK", "SALCHUM", "SALCHIN", "SALSOCK")) %>%
+  mutate(abundance = ifelse(is.na(Length), Unmeasured, 1)) %>%
+  mutate(Mon = factor(Mon, levels = c("Apr", "May", "Jun", "Jul"))) %>%
+  ggplot() +
+  geom_col(aes(x = as.factor(SiteID), y = abundance, fill = Mon))
+
+
+
+subset(eventIds, SiteID %in% rep) %>%
+  filter(Habitat == "Eelgrass") %>%
+  arrange(SiteID)
+
+other.sites <- filter(eventIds, !(SiteID %in% rep)) # other sites with no replicate sampling
+keep.events.may <- c(236, 237, 258, 259, 274, 275, 258, 359, 284, 285, 396, 399)
+# if we were interested in keeping a combination of April and May
+#keep.events.m.april <- c(282, 283, 396, 399, 234, 235, 256, 272, 273, 275, 356, 359)
+sub.sites <- subset(eventIds, EventID %in% keep.events.may) %>%
+  rbind(other.sites) %>%
+  filter(Mon %in% c("Apr", "May", "Jun", "Jul")) %>%
+  arrange(SiteID)  #%>% # all sites in southern southeast w/o resampling
+  #filter(Mon != "May") # lets drop May cause there's no kelp sampled in May
+
+table(sub.sites$Habitat)
+table(sub.sites$Mon, sub.sites$Habitat) 
+unique(sub.sites$Date) # in July sampled 7.14, 7.17, 7.16, 7.12
+
+sub.sites # for now lets leave this as is - if we wanted to even it out some we could get rid of the July eelgrass samples (I think all those happened in heceta)
+
+seso_fish_sing <- seso_fish_sub %>%
+  subset(EventID %in% sub.sites$EventID) # all sites sampled only once. 
+```
+
+How many total salmona re we talking about
+```{r}
+seso_fish_sub %>%
+  subset(EventID %in% other.sites$EventID) %>%
+  filter(SpCode %in% c("SALCOHO", "SALPINK", "SALCHUM", "SALCHIN", "SALSOCK")) %>%
+  mutate(abundance = as.numeric(ifelse(is.na(Length), paste(Unmeasured), 1))) %>%
+  group_by(SiteID) %>%
+  dplyr::summarise(total = sum(abundance)) # okay for not the resampled sites we have 668 fish, in 16 sites
+
+seso_fish_sub %>%
+  subset(SiteID %in% rep) %>%
+  filter(SpCode %in% c("SALCOHO", "SALPINK", "SALCHUM", "SALCHIN", "SALSOCK")) %>%
+  mutate(abundance = as.numeric(ifelse(is.na(Length), paste(Unmeasured), 1))) %>%
+  dplyr::summarise(total = sum(abundance)) # for all the resampled sites we have 11270
+
+seso_fish_sub %>%
+  subset(SiteID %in% rep) %>%
+  filter(SpCode %in% c("SALCOHO", "SALPINK", "SALCHUM", "SALCHIN", "SALSOCK")) %>%
+  mutate(abundance = as.numeric(ifelse(is.na(Length), paste(Unmeasured), 1))) %>%
+  filter(Mon == "Jul") %>%
+  dplyr::summarise(total = sum(abundance)) 
+# for all the resampled sites in APRIL 6840
+# FOR MAY 4251
+# for JUNE 114
+# for July 65
+
+# what percentage of sites compose what number of fish - but how do we do this with some sites having resmapled? 
+
+seso_fish_sing %>%
+  filter(SpCode %in% c("SALCOHO", "SALPINK", "SALCHUM", "SALCHIN", "SALSOCK")) %>%
+  mutate(abundance = as.numeric(ifelse(is.na(Length), paste(Unmeasured), 1))) %>%
+  dplyr::summarise(total = sum(abundance)) # 4910
+
+seso_fish_sing %>%
+  filter(SpCode %in% c("SALCOHO", "SALPINK", "SALCHUM", "SALCHIN", "SALSOCK")) %>%
+  mutate(abundance = as.numeric(ifelse(is.na(Length), paste(Unmeasured), 1))) %>%
+  filter(SiteID %in% c(135, 136, 140)) %>%
+  dplyr::summarise(total = sum(abundance))
+
+
+
+4043/4910 # 82% of the fish were caught in 3 sites
+
+seso_fish_sing %>%
+  filter(SpCode %in% c("SALCOHO", "SALPINK", "SALCHUM", "SALCHIN", "SALSOCK")) %>%
+  mutate(abundance = as.numeric(ifelse(is.na(Length), paste(Unmeasured), 1))) %>%
+  filter(Habitat == "Eelgrass") %>%
+  dplyr::summarise(total = sum(abundance)) # 3919 salmon caught in eelgrass
+
+seso_fish_sing %>%
+  filter(SpCode %in% c("SALCOHO", "SALPINK", "SALCHUM", "SALCHIN", "SALSOCK")) %>%
+  mutate(abundance = as.numeric(ifelse(is.na(Length), paste(Unmeasured), 1))) %>%
+  filter(Habitat == "Eelgrass") %>%
+  filter(SiteID %in% c(135, 136)) %>%
+  dplyr::summarise(total = sum(abundance)) # 3494 salmon caught in eelgrass in ONLY TWO SITES
+
+seso_fish_sing %>%
+  filter(SpCode %in% c("SALCOHO", "SALPINK", "SALCHUM", "SALCHIN", "SALSOCK")) %>%
+  mutate(abundance = as.numeric(ifelse(is.na(Length), paste(Unmeasured), 1))) %>%
+  filter(Habitat == "Kelp") %>%
+  dplyr::summarise(total = sum(abundance)) # 991 caught in kelp
+
+3919/4910 # 79% caught in eelgrass
+3494/4910 # 71% of the total salmon caught only caught in two eelgrass sites
+991/4910 # 20% of salmon caught in kelp
+
+```
+Okay so if we include sites only sampled once in May - then we have 
+Kinda close. 
+
+
+1. Analysis of 0s and 1s asking: 
+
+  - are there different catch rates in eelgrass and kelp 
+  
+      - incorporate average number of salmon/seine 
+      
+      - use t-tests (if normal) to test difference in the average number of salmon/seine
+      
+      - use glm's to include the interaction of month * habitat
+
+# Analysis 0 & 1s
+ 
+## diff catch rates? 
+```{r}
+glimpse(seso_fish_sing) # now subset to just salmon (keep 0s)
+
+sal.fish.wide  <- seso_fish_sing %>%
+  mutate(abundance = ifelse(is.na(Length), Unmeasured, 1)) %>%
+  dplyr::select(-c(X.1, X, Length, Unmeasured, taxon, Gear, Temp, Salinity)) %>%
+  group_by(SiteID, EventID, Date, Mon, Year, Locale, Location, SubLocale, Habitat, Lat1, Long1, SpCode) %>%
+  dplyr::summarise(total = sum(abundance)) %>%
+  pivot_wider(names_from = SpCode, values_from = total, values_fill = 0) %>%
+  dplyr::select(SiteID, EventID, Date, Mon, Year, Locale, Location, SubLocale, 
+                Habitat, Lat1, Long1, SALCOHO, SALCHUM, SALPINK, SALSOCK) %>%
+  ungroup()
+
+sal.fish.long.sp <-  pivot_longer(sal.fish.wide, cols = c("SALCHUM","SALPINK", "SALCOHO", "SALSOCK"),
+                               values_to = "abundance", names_to = "SpCode") 
+sal.fish.long <- sal.fish.long.sp %>%
+  dplyr::select(-SpCode) %>%
+  group_by(SiteID, EventID, Habitat, Mon) %>%
+  mutate(abundance = sum(abundance)) %>%
+  ungroup() %>%
+  distinct()
+
+sal.fish.long.sp  %>%
+  ungroup() %>%
+  dplyr::select(SiteID, Lat1, Long1, Habitat) %>%
+  distinct()
+
+sal.fish.long.sp %>%
+  ggplot() +
+  geom_col(aes(x = Habitat, y = abundance, fill = SpCode))
+
+# plot the average by habitat
+mean <- sal.fish.long %>%
+  group_by(Habitat) %>%
+  dplyr::summarise(avg = mean(abundance),
+                   sd = sd(abundance)) %>%
+  ggplot() +
+  geom_col(aes(x = Habitat, y = avg)) +
+  geom_errorbar(aes(x = Habitat, ymin = avg, ymax = avg +sd), width = 0.2) +
+  plot_theme()
+
+# plot the median by habitat too
+median <- sal.fish.long %>%
+  group_by(Habitat) %>%
+  dplyr::summarise(avg = median(abundance),
+                   sd = sd(abundance)) %>%
+  ggplot() +
+  geom_col(aes(x = Habitat, y = avg)) +
+  geom_errorbar(aes(x = Habitat, ymin = avg, ymax = avg +sd), width = 0.2) +
+  labs(y = "Median salmon") +
+  plot_theme()
+
+library(patchwork)
+mean + median
+
+table(sal.fish.long$Year)
+table(sal.fish.long$abundance>0)
+```
+
+Lets try linear modelling esp to look at the residuals 
+```{r}
+set.seed(19960527)
+mod1 <- lm(abundance ~ Habitat * Mon, data = sal.fish.long)
+summary(mod1)
+anova(mod1)
+
+par(mfrow=c(2,2))
+plot(mod1) # this is no good residuals are not normal
+
+mod2 <- lm(abundance ~ Habitat + Mon, data = sal.fish.long)
+summary(mod2)
+plot(mod2)
+
+
+unique(sal.fish.long$Year)
+table(sal.fish.long$abundance>0)
+
+#what if we transformed them
+library(MASS)
+bbox <- lm(formula = abundance + 0.01 ~ Habitat + Mon, data = sal.fish.long)
+boxcox(bbox) # its pretty close to zero so log might be a good transformation
+
+range(sal.fish.long$abundance)
+sal.fish.long$abund.log <- log(sal.fish.long$abundance + 0.01)
+sal.fish.long$abund.frt <- sal.fish.long$abundance^(0.25)
+hist(sal.fish.long$abund.log)
+hist(sal.fish.long$abund.frt)
+
+mod.log <- lm(abund.log ~ Habitat + Mon, data = sal.fish.long)
+par(mfrow=c(2,2))
+plot(mod.log) # qq plot isn't bad - residuals v fitted maybe does increase in width but it isn't bad
+summary(mod.log)
+sum.mod.log <- summary(mod.log)
+shapiro.test(residuals(mod.log))
+AIC(mod.log)
+```
+
+## predict mod.log
+```{r}
+visreg(mod.log, "Habitat", scale = "response")
+visreg(mod.log, "Mon")
+visreg(mod.log, "Mon", scale = "response")
+
+pr.hab <- predict(mod.log, newdata = data.frame(Habitat = unique(sal.fish.long$Habitat), Mon = "Jun"), se.fit = TRUE)
+
+# NOTE ABOUT THIS PREDICTIONS - its all back transformed on the median not mean
+# You need to eventually bias correct it to mean
+r <- residuals(mod.log)
+var(r)/2
+
+pred<- exp(pr.hab$fit) #+(sum.mod.log$sigma^2/2))
+lwr <- exp(pr.hab$fit - (1.96*pr.hab$se.fit)) #+ (sum.mod.log$sigma^2/2))
+upr <- exp(pr.hab$fit + (1.96 *pr.hab$se.fit))# + ((sum.mod.log$sigma^2)/2)) # + sigma2 /2
+           
+pr.mon <- predict(mod.log, newdata = data.frame(Habitat = "Eelgrass", Mon = unique(sal.fish.long$Mon)), se.fit = TRUE)
+
+pred.m <- exp(pr.mon$fit)
+lwr.m <- exp(pr.mon$fit - (1.96*pr.mon$se.fit))
+upr.m <- exp(pr.mon$fit + (1.96 *pr.mon$se.fit))
+
+pr.hab.df <- data.frame(cbind(pred, lwr, upr, unique(sal.fish.long$Habitat))) %>%
+  dplyr::rename(Habitat = V4) %>%
+  mutate(fit = as.numeric(pred),
+         lwr = as.numeric(lwr),
+         upr = as.numeric(upr))
+
+pr.mon.df <- data.frame(cbind(pred.m, lwr.m, upr.m, unique(sal.fish.long$Mon))) %>%
+  dplyr::rename(Mon = V4) %>%
+  mutate(Mon = fct_relevel(Mon, c("May", "Jun", "Jul"))) %>%
+  mutate(fit = as.numeric(pred.m),
+         lwr = as.numeric(lwr.m),
+         upr = as.numeric(upr.m))
+
+a <- ggplot() +
+  geom_col(aes(x = Habitat, y = fit), data = pr.hab.df) +
+  geom_errorbar(aes(x = Habitat, ymin = fit -lwr, ymax = fit + upr), width = 0.2,
+                data = pr.hab.df) + plot_theme() +
+  labs(y = "salmon catch")
+
+b <- ggplot() +
+  geom_col(aes(x = Mon, y = fit), data = pr.mon.df) +
+  geom_errorbar(aes(x = Mon, ymin = fit -lwr, ymax = fit + upr), width = 0.2,
+                data = pr.mon.df) + plot_theme() +
+  labs(y = "salmon catch")
+
+visreg(mod.log)
+summary(mod.log)
+anova(mod.log)
+library(emmeans)
+emmeans(mod.log, pairwise ~ Mon)
+emmeans(mod.log, pairwise ~ Habitat)
+
+a + b + plot_annotation(tag_levels="a")
+```
+
+Trying a students t-distribution
+```{r}
+library(mgcv)
+mod.t <- gam((abundance + 0.01) ~ Habitat + Mon, data = sal.fish.long, family = scat(min.df = 1, link = "log"))
+summary(mod.t)
+
+gam.check(mod.t) # okay no this doesn't work that well - we dont like this version. 
+```
+
+Another way of dealing with large outliers is a robust regression: 
+https://www.statology.org/robust-regression-in-r/
+```{r}
+library(MASS)
+rlm <- rlm(abundance ~ Habitat + Mon, data = sal.fish.long)
+summary(rlm)
+plot(rlm)
+# compare with the ols model 
+summary(mod2)$sigma
+summary(rlm)$sigma
+summary(mod.log)$sigma
+# according to the above blog - the model with the lower RSE (residual standard error) indicates its better fit of the data
+AIC(mod2); AIC(rlm); AIC(mod.log)
+# honestly while the robust regression does have a lower RSE than the regular model - it kinda looks like the log transformed linear model does a better job. 
+```
+
+
+THIS IS WHERE I LEFT OFF 4/19/23
+skipped fixing for everything below and skipped to 1+s
+```{r}
+# how many fish did we catch in total? 
+sal.fish.long %>%
+  ungroup() %>%
+  dplyr::summarise(total = sum(abundance)) # 4910
+```
+
+
+Try a diff distribution - first lets check how many 0s we're talking about
+```{r}
+hist(sal.fish.long$abundance)
+# yea heavily zero inflated
+hist(ifelse(sal.fish.long$abundance > 0, 1, 0)) # there are more 0s than 1s
+table(ifelse(sal.fish.long$abundance >0, 1, 0)) # nearly double the number of 0s (but this includes all species)
+
+# if we combine 
+sal.site <- sal.fish.long %>%
+  #dplyr::select(-SpCode) %>%
+  group_by(SiteID, EventID, Habitat, Date) %>%
+  dplyr::summarise(total = sum(abundance))
+
+hist(sal.site$total)
+table(ifelse(sal.site$total > 0, 1, 0)) # we have a total of 41 sites, at 15 of them we caught 0, at 26 we caught something
+```
+
+Try a poisson
+```{r}
+pois <- glm(abundance ~ Habitat + Mon, data = sal.fish.long, 
+    family = poisson(link = "log"))
+summary(pois)
+par(mfrow=c(2,2))
+plot(pois) # still increasing variance, there are some wild things happening with poisson distribution it doesn't look good
+```
+
+Neg bin
+```{r}
+# can we include date as categorical
+library(lubridate)
+sal.fish.long <- sal.fish.long %>%
+  mutate(date = mdy(Date),
+         doy = yday(date))
+
+nb <- glm.nb(abundance ~ Habitat * Mon, data = sal.fish.long, link = "log")
+summary(nb) # makes sense that intx isn't sig and that June and May are
+
+par(mfrow=c(2,2))
+plot(nb)
+# looks like the constant variance is better but the QQ is wonky
+# also the intx doesn't look significant so lets drop it
+
+# if we include day of year
+nb.doy <- glm.nb(abundance ~ Habitat * doy, data = sal.fish.long, link = "log")
+summary(nb.doy)
+plot(nb.doy) # super wonky qq plot
+# intx still isn't significant
+# this time the intercept and doy yea are sign But kelp isn't sign diff than intercept
+
+nb.doy2 <- glm.nb(abundance ~ Habitat + doy, data = sal.fish.long, link = "log")
+summary(nb.doy2) # intercept and doy sig
+plot(nb.doy2) # qq plot is super bizarre there are at least 3 sites that are outliers (and potentially influential)
+
+nb2 <- glm.nb(abundance ~ Habitat + Mon, data = sal.fish.long, link = "log")
+summary(nb2) # month and intecept sign
+plot(nb2) # same situation as above
+
+nb2.doy <- glm.nb(abundance ~ Habitat + doy, data = sal.fish.long, link = "log")
+summary(nb2.doy) # doy is significant
+plot(nb2.doy)
+
+lrtest(nb, nb2) # simplier model better
+lrtest(nb.doy, nb2.doy) # simplier model better
+AIC(nb); AIC(nb2) # nb2 reduced AIC (no intx)
+AIC(nb.doy); AIC(nb2.doy) # different variables so can't compare to the nb, models nearly the same
+```
+
+zero inflated
+Okay so we know that we have like a third of the sites with no salmon catch - perhaps zero inflated would be a better way to visualize this
+```{r}
+par(mfrow=c(2,2))
+# Since we know there is a high abundance of zero in the data try and fit the zero inflated model
+ziglmm <- glmmTMB(abundance ~ Habitat + Mon, ziformula = ~1, family = nbinom2, data = sal.fish.long)
+summary(ziglmm) # month june and May significant
+
+# look at simulated residuals
+#DHARMa = simulation-based approach to create readily interpretable scaled (quantile) residuals for fitted (generalized) linear mixed models
+zigresd <- simulateResiduals(ziglmm) #calculates randomized quantile residuals
+plot(zigresd) # actually not bad at all
+testDispersion(zigresd) # *i think* this is okay... 
+
+ziglmm2 <- glmmTMB(abundance ~ Habitat + Mon, ziformula = ~Habitat, family = nbinom2, data = sal.fish.long)
+summary(ziglmm2)
+# look at simulated residuals
+#DHARMa = simulation-based approach to create readily interpretable scaled (quantile) residuals for fitted (generalized) linear mixed models
+zigresd2 <- simulateResiduals(ziglmm2) #calculates randomized quantile residuals
+plot(zigresd2) # also not bad
+testDispersion(zigresd2)
+
+#### BETWEEN the two zero inflated models above I'm not sure which is better
+
+# trying setting up a negative binomial model in the glmmTMB format
+negbin <- glmmTMB(abundance ~ Habitat + Mon, family = nbinom2, data = sal.fish.long)
+summary(negbin)
+# look at simulated residuals
+#DHARMa = simulation-based approach to create readily interpretable scaled (quantile) residuals for fitted (generalized) linear mixed models
+nb.resid <- simulateResiduals(negbin) #calculates randomized quantile residuals
+plot(nb.resid) # not bad, why does this fit seem to be better than the other nb models above?
+testDispersion(nb.resid)
+
+negbin2 <- glmmTMB(abundance ~ Habitat, family = nbinom2, data = sal.fish.long)
+summary(negbin2)
+
+# look at simulated residuals
+#DHARMa = simulation-based approach to create readily interpretable scaled (quantile) residuals for fitted (generalized) linear mixed models
+nb.resid2 <- simulateResiduals(negbin2) #calculates randomized quantile residuals
+plot(nb.resid2) # issues within group deviations from uniformity (levenes test) - this makes sense cause we dropped month which is the most important one agruablly. 
+testDispersion(nb.resid2)
+
+
+AIC(ziglmm); AIC(ziglmm2); AIC(negbin); AIC(negbin2); AIC(pois); AIC(nb2)
+# using AIC it looks like the negative binonimal models are the best
+# The negbin with glmmTMB and glm.nb both have the lowest AIC 631, but the zero inflated model has only a slightly larger AIC 633 and the residual plots seem to look better, 
+
+# for now go forward with the hegbin
+```
+
+A lot of the effort in neg bin and zeroinf were done with a dataframe that wasn't correct - so we kind shouldn't rely on that code or the conclusions therein
+
+
+
+## predict data frm model - negbin
+```{r}
+par(mfrow=c(1,2))
+visreg(negbin)
+
+visreg(negbin, "Habitat", 
+                scale = "response", gg = TRUE, rug = F, line.par = list(col = "black")) +
+  xlab("Habitat") + 
+  ylab(NULL) +
+  #geom_point(data = sal.fish.long, aes(x = Habitat, y = abundance)) + 
+  plot_theme()
+
+visreg(negbin, "Mon", 
+                scale = "response", gg = TRUE, rug = F, line.par = list(col = "black")) +
+  xlab("Month") + 
+  ylab(NULL) +
+  #geom_jitter(data = sal.fish.long, aes(x = Habitat, y = abundance)) + 
+  plot_theme()
+
+# lets actually backtransform 
+
+pr.dat <- predict(negbin, newdata = data.frame(Habitat = unique(sal.fish.long$Habitat), Mon = "Jun"), 
+        se.fit = TRUE, type = "link") # even though there are more instances of habitat and month, we're interested in the variability of the response (abundance) across habitat held at a constant explanatory variable (Month). this predicts the partial effect of Month so that you can figure out the effect of Habitat. (makes interpretation easier). So we're also predicting in the link space (because of the negbin). If you dont predict in the link space (the other option is the response) which would push some CI outside the constraints of the link space. 
+# but now the data is in the link space and thats hard to interpret
+
+dat <- cbind(pr.dat, data.frame(Habitat = unique(sal.fish.long$Habitat)))
+
+# construct the CI and the back transformed fitted vlaues
+upr <- exp(dat$fit + (1.96 * dat$se.fit))
+lwr <- exp(dat$fit - (1.96 * dat$se.fit))
+bk.fit <- exp(dat$fit)
+
+dat2 <- cbind(dat, bk.fit, upr, lwr) # these are the backtransformed CI and fited values across Habitat with the month (June held constant)
+
+a <- ggplot() +
+  geom_col(aes(x = Habitat, y = bk.fit), dat2) +
+  geom_errorbar(aes(x = Habitat, ymin = bk.fit - lwr, ymax = bk.fit + upr), width = 0.2, dat2) +
+  #geom_jitter(data = sal.fish.long, aes(x = Habitat, y = abundance)) +
+  labs(x = "Habitat", y = "Number of salmon") + plot_theme()
+  #coord_cartesian(ylim = c(0, 100))
+a
+summary(negbin)
+```
+
+```{r}
+# okay now we need to do the same thing by month 
+pr.dat2 <- predict(negbin, newdata = data.frame(Mon = unique(sal.fish.long$Mon), Habitat = "Eelgrass"), 
+        se.fit = TRUE, type = "link") # even though there are more instances of habitat and month, we're interested in the variability of the response (abundance) across habitat held at a constant explanatory variable (Habitat). this predicts the partial effect of Habitat so that you can figure out the effect of Habitat. (makes interpretation easier). So we're also predicting in the link space (because of the negbin). If you dont predict in the link space (the other option is the response) which would push some CI outside the constraints of the link space. 
+# but now the data is in the link space and thats hard to interpret
+
+dat2.1 <- cbind(pr.dat2, data.frame(Mon = unique(sal.fish.long$Mon)))
+
+# construct the CI and the back transformed fitted vlaues
+upr <- exp(dat2.1$fit + (1.96 * dat2.1$se.fit))
+lwr <- exp(dat2.1$fit - (1.96 * dat2.1$se.fit))
+bk.fit <- exp(dat2.1$fit)
+
+dat3 <- cbind(dat2.1, bk.fit, upr, lwr) %>% # these are the backtransformed CI and fited values across Habitat with the month (June held constant)
+  mutate(Mon = fct_relevel(Mon, "May", "Jun", "Jul"))
+b <- ggplot() +
+  geom_col(aes(x = Mon, y = bk.fit), dat3) +
+  geom_errorbar(aes(x = Mon, ymin = bk.fit - lwr, ymax = bk.fit + upr), width = 0.2, dat3) +
+  #geom_jitter(data = sal.fish.long, aes(x = Mon, y = abundance)) +
+  labs(x = "Month", y = NULL) + plot_theme()
+b
+summary(negbin)
+
+emmeans::emmeans(negbin, ~ Habitat)
+emmeans::emmeans(negbin, ~ Mon)
+```
+
+## ggplots of predictions
+using negbin
+```{r}
+# together
+library(patchwork)
+a + b + plot_annotation(tag_levels= "a")
+```
+
+2. When positive (1s + )
+  
+  - is there a difference in salmon (avg salmon/seine) by habitat type? 
+  
+      - t-test 
+      
+      - glms to include interaction of month * habitat
+
+# Analysis 1s+
+Average different in habitat type when positive
+```{r}
+glimpse(sal.fish.long) # this dataframe already has the remove replicate seines
+
+# what are the sites with no catch
+drop.sites <- sal.fish.long %>%
+  group_by(SiteID) %>%
+  dplyr::summarise(total = sum(abundance)) %>%
+  filter(total == 0) %>%
+  dplyr::select(SiteID)
+
+sal.long.pos <- sal.fish.long %>%
+  subset(!(SiteID %in% drop.sites$SiteID)) %>%
+  group_by(SiteID) %>%
+  mutate(abundance = sum(abundance)) %>%# for now lets combine all salmon
+  dplyr::select(-c(abund.log, abund.frt)) %>%
+  distinct()
+
+# check to see if it worked
+sal.long.pos %>%
+  group_by(SiteID) %>%
+  dplyr::summarise(total = sum(abundance)) %>%
+  filter(total == 0)
+
+sal.long.pos %>%
+  group_by(Habitat) %>%
+  dplyr::summarise(avg.abund = mean(abundance),
+                   sd.abund = sd(abundance)) %>%
+  ggplot() +
+  geom_col(aes(x = Habitat, y = avg.abund), color = "black")+
+  geom_errorbar(aes(x = Habitat, ymin = avg.abund, ymax = avg.abund + sd.abund),width = 0.2) + 
+  labs(title = "When salmon present...") +
+  plot_theme()
+# okay so hella variable but maybe something happening
+
+ggplot(sal.long.pos) +
+  geom_col(aes(x = Habitat, y = abundance, fill = SpCode)) + plot_theme()
+# catch is overwhelmingly based on pink salmon
+
+ggplot(sal.long.pos) +
+  geom_col(aes(x = Habitat, y = abundance, fill = as.factor(SiteID))) + plot_theme()
+# a few sites with a lot of salmon caught with other sites with just a few salmon present - when caught salmon were present often in large numbers
+
+ggplot(sal.long.pos) +
+  geom_col(aes(x = as.factor(SiteID), y = abundance, fill = Habitat)) +
+  plot_theme() + # patterns are likely driven by only a few sitees with highly abundant catches
+  theme(axis.text.x = element_text(angle = 45))
+
+hist(sal.long.pos$abundance) # lots in low positives
+```
+
+try out some linear modelling
+```{r}
+lm <- lm(abundance ~ Habitat + Mon, data = sal.long.pos)
+summary(lm)
+# okay no sig diff, but hows the fit
+par(mfrow = c(2,2))
+plot(lm)
+# looks lik there's an increase in fitted values constant variance and the QQ plot is wonky
+
+# what about a transformation
+
+lm.log <- lm(log(abundance) ~ Habitat + Mon, data = sal.long.pos)
+summary(lm.log)
+
+plot(lm.log) # the variance looks way bettr - with some variability but QQ great
+
+library(MASS)
+b <- boxcox(lm)
+lambda <- b$x[which.max(b$y)]
+lambda # i would say thats either a log transformation
+
+sal.long.pos$abund.trans <- (sal.long.pos$abundance ^ lambda -1) / lambda
+
+# transformed model -1 drops the intercept
+lm.trans <- lm(abund.trans ~ Habitat + Mon - 1, data = sal.long.pos)
+summary(lm.trans)
+plot(lm.trans) # this looks like a lot better
+
+# when you remove the intercept you're asking what is the mean abundance in each of these habitats and are those significantly different than 0, BUT NOT SIGNIFICANTLY DIFFERENT FROM EACH OTHER. 
+
+anova(lm.trans) # this tells you that there is a significant impact of habitat on positive catch abundance
+
+# have to have the linear model from the aov
+a.lm <- aov(log(abundance) ~ Habitat + Mon -1, data = sal.long.pos)
+# follow up with pairwise tests
+TukeyHSD(a.lm, "Habitat")
+TukeyHSD(a.lm, "Mon")
+
+# okay but like we've already done this by not including zeros in our original dataframe... so thats not a valid approach
+# maybe its best to just keep the original model that has both zeros and 1s
+```
+
+# Random effects modeling
+```{r}
+rep
+sal.repeat.wide <-subset(seso_fish_sub, SiteID %in% rep) %>%
+  mutate(abundance = ifelse(is.na(Length), paste(Unmeasured), 1),
+         abundance = as.numeric(abundance)) %>%
+  dplyr::select(-c(X.1, X, Length, Unmeasured, Sp_CommonName, Sp_ScientificName, taxon)) %>%
+  filter(SpCode %in% c("SALSOCK", "SALCHUM", "SALCOHO", "SALPINK", "SALCHIN")) %>% # i checked we keep all our sitess
+  group_by(SiteID, EventID, Date, Season, Mon, SeasonNoYear, Year, Gear, Temp, Salinity,
+           Region, Locale, Location, SubLocale, Nickname, Habitat, Lat1, Long1, SpCode) %>%
+  dplyr::summarise(abundance = sum(abundance)) %>%
+  ungroup() %>%
+  pivot_wider(names_from = SpCode, values_from = abundance, values_fill = 0)
+  
+sal.repeat <- sal.repeat.wide %>%
+  pivot_longer(cols = c(SALCHUM, SALPINK, SALCOHO, SALSOCK), names_to = "SpCode", values_to = "abundance")
+```
+
+The main  hypothesis is a comparison of eelgrass and kelp as an important structure for salmon in the nearshore. 
+
+Based on Schielzeth & Nakagawa (2012), I've determined that my main effect factor 1 is Habitat type and my main effect factor 2 is site. 
+
+By using mixed-effect model as a modelling framework with a fully crossed sampling design--this allows partitioning of variance between the four main sources of variances:
+
+1. Main effect variance explained by factor 1
+
+2. Main effect variance explained by factor 2
+
+3. Interaction variance -- variance in the response explainby combination of site x habitat **after controlling** for the average effect of the habitat acoss all sites and the average effect of the site on habitat type. 
+
+4. Residual variance -- variance in the response unexplained by the habitat, site, and their interaction. If you *exclude* or *remove* the interaction term then the variance is POOLED in residual variance.  
+
+Important decision making points when fitting a mixed model. Determine which factors are fixed versus random is important. Including random factors should not be done lightly as it completely changes the interpretation of the model estimates. See the blog post and thread for more information on the difference between the two and when to use random effects [link](https://dynamicecology.wordpress.com/2015/11/04/is-it-a-fixed-or-random-effect/). 
+
+Based on advise from Franz's course--when fitting mixed effect models and obtaining parameter estimations there are two main methods, Maximum Likelihood (ML) and Restricted Maximum Likelihood (REML). You **cannot** use REML to compare models with different fixed effects structure, rather ML is the best use for comparison of different models. After a "best" model is determiend, parameter estimation/CI using REML should be used. 
+
+## Model set up:
+We have twelve sites sampled across months 
+
+Questions:
+
+1. What is the abundance of salmon in a typical habitat type
+
+2. What is the variation of salmon among habitats (among group variance)
+
+3. What is the variation of salmon within months (within group variance)
+
+yij = beta + bi + Eij
+
+beta - mean abundance across habitats
+
+bi - random variable representing the deviation from the population mean
+
+bi ~ N(0, sigma-b^2)
+
+Eij - random variable representing the deviation from observation j from the mean density for site 
+
+Assumptions
++ residuals are assumed to be independent, normally distributed random variables with **constant variance**
+
++ random effects are assumed to be **independent** and normally distributed
+
+Model packages options
++ nlme, functions : lme, nlme    -- can accommodate residual correlations
+
++ lme4 - more stable algorithms, can fit generalized mixed effects models but does not accommodate residual correlation, functions: lmer, nlmer, glmer
+
++ glmm - gmm using monte carlo likelihood estimation
+
+```{r}
+detach_package <- function(pkg, character.only = FALSE)
+{
+  if(!character.only)
+  {
+    pkg <- deparse(substitute(pkg))
+  }
+  search_item <- paste("package", pkg, sep = ":")
+  while(search_item %in% search())
+  {
+    detach(search_item, unload = TRUE, character.only = TRUE)
+  }
+}
+```
+
+This fixes and drops the spcode so that each row represents a single site, event, month combo
+```{r}
+sal.repeat.simp <- sal.repeat %>%
+  dplyr::select(c(SiteID, Mon, Habitat, abundance)) %>%
+  group_by(SiteID, Mon, Habitat) %>%
+  dplyr::summarise(abundance = sum(abundance)) %>%
+  ungroup()
+
+table(sal.repeat.wide$SiteID, sal.repeat.wide$Mon)
+table(sal.repeat.simp$SiteID, sal.repeat.simp$Mon)
+
+table(sal.repeat.simp$abundance>0)
+hist(sal.repeat.simp$abundance)
+
+```
+Want to make sure we have the zeros where they belong - this the sampling by month, 1 means that site was sampled that month 0 means it wasnt. 
+SiteID Apr Jul Jun May
+  131   1   0   1   1
+  132   1   0   0   1
+  135   0   0   1   1
+  136   1   0   1   1
+  137   1   0   1   1
+  138   1   0   1   1
+  139   1   1   1   1
+  140   1   0   1   1
+  141   1   0   1   1
+  142   1   1   1   1
+  145   0   1   1   0
+  146   0   1   1   1
+
+9 samples April 
+11 samples may
+11 samples june
+4 samples july
+```{r}
+library(nlme)
+library(lme4)
+# follow franz's course we'll look at the same model by each group
+# We fit a mixed-effects model with an average richness in the baci relationship estimated
+# as a fixed effect and two different mixed-effects structures
+
+# a) random intercept by subject (slope fixed and identical across subjects):
+lmm <- lme(abundance ~ Habitat * Mon, data = sal.repeat.simp, random = ~ 1|SiteID, method = "ML")
+summary(lmm)
+
+# b) random intercepts AND random slopes by subject:
+ lmm2 <- lme(abundance ~ Habitat * Mon, data=sal.repeat.simp, random = ~ Mon|SiteID,  method="ML", control = lmeControl(msMaxIter = 99999999, msMaxEval = 9999999))
+summary(lmm2) # model only converges when you use month as the random slope
+ 
+# likelihood ratio test for comparing
+anova(lmm, lmm2) # tCAN'T compare cause the number of groups and observations are different
+
+# lets redo the models without the interaction cause its not significant
+# a) random intercept by subject (slope fixed and identical across subjects):
+lmm3 <- lme(abundance ~ Habitat + Mon, data = sal.repeat.simp, random = ~ 1|SiteID, method = "ML")
+summary(lmm3)
+
+# b) random intercepts AND random slopes by subject:
+lmm4 <- lme(abundance ~ Habitat + Mon, data=sal.repeat.simp, random = ~ Mon |SiteID,  method="ML", control = lmeControl(msMaxIter = 99999999, msMaxEval = 9999999))
+summary(lmm4)
+
+anova(lmm3, lmm4) # cool same as above lets use lmm3
+```
+
+Refit random model using reml   
+```{r}
+reml <- lme(abundance ~ Habitat + Mon, data = sal.repeat.simp, 
+            random = ~ 1|SiteID, method = "REML")
+summary(reml)
+
+# Residual diagnostics for best model (random intercept only):
+ plot(reml, resid(.) ~ as.numeric(Habitat)| SiteID, type="b")
+ plot(reml, resid(.) ~ fitted(.))
+ plot(reml, resid(.) ~ fitted(.) | SiteID)
+# Check distribution:
+ qqnorm(resid(reml)); qqline(resid(reml))
+ 
+ # In addition to residual diagnostics, for mixed effects models we should 
+# also examine the distribution of random effects, which (similar to residuals)
+# are assumed to be normally distributed. We can extract random effects using
+# the function 'ranef':
+ ranef(reml) # random effects for each site
+# These should have a mean of zero and an approximate normal distribution: 
+ re <- ranef(reml)[,"(Intercept)"]
+ qqnorm(re); qqline(re)  # actually isn't terrible 
+ 
+```
+##lme predictions
+Based on this blog link https://rinterested.github.io/statistics/predict_mixed_models.html
+```{r}
+ranef(reml) # these are the random effects by site
+summary(reml)
+
+
+```
+
+
+
+STOPPED HERE AND DIDN'T GO THROUGH AND FIX EVERYTHING BELOW - LKD 4/19/23
+Okay these mixed models do not look good using just the gaussian distribution most likely these need to be fit with a mixed effects negative binomial distribution. 
+
+```{r}
+gmem.nb <- lme4::glmer.nb(total ~ Habitat + Mon + (1|SiteID),
+      data = sal.repeat.simp) # does this fit with reml or ml?
+
+summary(gmem.nb)
+
+
+# check fit? 
+#DHARMa = simulation-based approach to create readily interpretable scaled (quantile) residuals for fitted (generalized) linear mixed models
+library(DHARMa)
+gmem.resid <- simulateResiduals(gmem.nb) #calculates randomized quantile residuals
+plot(gmem.resid) # not bad at all
+testDispersion(gmem.resid)
+
+# looks like tis closer to having it look nice
+```
+
+What if it was zero inflated
+```{r}
+library(glmmTMB)
+zi.pois <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID), data = sal.repeat.simp,
+        ziformula = ~1, family = poisson)
+
+summary(zi.pois)
+zipi.resid <- simulateResiduals(zi.pois) #calculates randomized quantile residuals
+plot(zipi.resid) # at least theres minimal violation in the homogentiy of varience. the qq test aint great
+testDispersion(zipi.resid)
+
+zi.nb <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID), data = sal.repeat.simp,
+        ziformula = ~1, family = nbinom1)
+
+summary(zi.nb) # suddenly when you switch from pois to nb you no longer see sig month? 
+zinb.resid <- simulateResiduals(zi.nb) #calculates randomized quantile residuals
+plot(zinb.resid) # deviation sign diff
+testDispersion(zinb.resid)
+
+AIC(zi.pois); AIC(zi.nb); AIC(gmem.nb) # is this valid?
+```
+
+# hurdle models?
+```{r}
+hurd.pois <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID),
+        zi = ~Habitat + Mon,
+        family = truncated_poisson, data = sal.repeat.simp)
+
+summary(hurd.pois)
+
+hurd.resid <- simulateResiduals(hurd.pois) #calculates randomized quantile residuals
+plot(hurd.resid) # some deviation definitely apparent
+testDispersion(hurd.resid)
+
+hurd.nb <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID),
+        zi = ~ Habitat + Mon,
+        family = truncated_nbinom2, data = sal.repeat.simp) # doesn't want to fit when I fixed the data frames
+
+summary(hurd.nb)
+hurd.resid2 <- simulateResiduals(hurd.nb) #calculates randomized quantile residuals
+plot(hurd.resid2) # cannot fit crashes r
+testDispersion(hurd.resid2)
+
+AIC(hurd.pois)
+```
+
+When need to predict the hurdle model
+- loop that indicates number of bootstrapping iterations (good to do at least 100 - check how nice the distribution of the results look. Since the model runs fast do 500)
+  - resample the data WITH REPLACEMENT (because we have a smaller dataset)
+  - fit the model with the new dataset (resampled)
+  - make your predictions using fitted model (these are the prob of enc * positive counts) cond * zeroinfl
+  - the predictions will change each iterations so you're the creating a distribution of outcomes and from there you can get your predicts (use quantile function to get intervals)
+  - point estimate of predictions can be mean of the predictions
+  - need to also do a bias correction for the predictions (need to get formula for this)
+  
+## hurdle predictions
+```{r}
+
+# have to set seed to make sure we get reproducible results
+unique(sal.repeat.simp$abundance)
+  
+set.seed(09281992)
+N <- 500
+habitat <- data.frame()
+months <- data.frame()
+for (i in 1:N) {
+  site.info <- unique(sal.repeat.simp[c("SiteID", "Mon", "Habitat")]) # extract site info
+  sample <- data.frame(abundance = sample(sal.repeat.simp$abundance, replace = TRUE)) # resample
+  
+  sal.repeat.simp %>%
+    group_by(Habitat, Mon,)
+  
+  resample <- cbind(site.info, sample) # bring together resampled dataset
+  hurd.nb <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID),
+        zi = ~ Habitat + Mon,
+        family = truncated_nbinom2, data = resample) # fit model with new data
+  # calculate predicted values from hurdle model
+  pred.hab <- predict(hurd.nb, newdata = data.frame(Habitat = unique(sal.repeat.simp$Habitat),
+                                                    SiteID = NA, Mon = "Jun"),
+                      type = "response") 
+  pred.mon <- predict(hurd.nb, newdata = data.frame(Habitat = "Eelgrass", 
+                                                    SiteID = NA, 
+                                                    Mon = unique(sal.repeat.simp$Mon)),
+                  type = "response") 
+  temp1 <- data.frame(Habitat.pred = pred.hab, Habitat = unique(sal.repeat.simp$Habitat),
+                      bootstrap = N)
+  temp2 <- data.frame(Month.pred = pred.mon, 
+                      Mon = unique(sal.repeat.simp$Mon), bootstrap = i)
+  habitat <- rbind(temp1, habitat)
+  months <- rbind(temp2, months)
+  print(i)
+}
+
+habitat %>%
+  group_by(Habitat) %>%
+  dplyr::summarise(avg = mean(Habitat.pred),
+                   sd = sd(Habitat.pred)) %>%
+  ggplot() +
+  geom_col(aes(x = Habitat, y = avg), color = "black") +
+  geom_errorbar(aes(x = Habitat, ymin = avg, ymax = avg + sd), width = 0.2)
+
+
+months %>%
+  group_by(Habitat) %>%
+  dplyr::summarise(avg = mean(Month.pred),
+                   sd = sd(Month.pred)) %>%
+  ggplot() +
+  geom_col(aes(x = Habitat, y = avg), color = "black") +
+  geom_errorbar(aes(x = Habitat, ymin = avg, ymax = avg + sd), width = 0.2)
+```
+
+
+Can we visualize temporal changes in the salmon catch by site
+Not predicted by models
+```{r}
+sal.repeat %>%
+  mutate(Mon = factor(Mon, levels = c("Apr", "May", "Jun", "Jul"))) %>%
+  ggplot() +
+  geom_col(aes(x = Mon, y = abundance, fill = SpCode)) +
+  facet_wrap(~Habitat + SiteID)
+```
+
