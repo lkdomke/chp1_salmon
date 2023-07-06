@@ -1,0 +1,275 @@
+---
+title: "noaa_sal_veg_habs"
+author: "Lia Domke"
+date: "2/13/2023"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(MASS)
+library(lme4) # random effect glms
+library(lmtest) # lrtest
+library(visreg)
+library(ggplot2)
+library(sf)
+library(pscl) # hurdle function
+library(glmmTMB) # zero inflated reffects
+library(forcats)
+```
+
+
+```{r data}
+seso <- read.csv("Data/noaa_region_seso.csv", stringsAsFactors=FALSE, header = TRUE)
+```
+
+fix incor species
+```{r}
+unique(seso$taxon)
+unique(seso$Sp_CommonName) # there are a couple of non fish species, 93 unique species 
+
+incor <- c("SHRMGRA", "BSNAILW", "CRABHEL", "JLYMOON", "JLYCLNG", "TUNICAT", "SHRMDOC", "STARLEA", "SHRMSTI",
+           "SHRMSPO", "CRABHER", "SHRMHIP", "ISOPODG", "CRABGD", "CRABDUN", "SHRMCR", "ISOPODC", "SHRMCOO",
+           "CRABGKE", "UNMYSID", "CRABNKE", "NUDOPAL", "NUDHOOD")
+
+seso_fish <- seso %>%
+  mutate(taxon = ifelse(SpCode %in% incor, "invertebrate", taxon)) %>%
+  filter(taxon == "fish") %>%
+    filter(Habitat == "Eelgrass"| Habitat == "Kelp")
+
+unique(seso_fish$Sp_CommonName) # now only 70 
+```
+
+
+filter by hab
+```{r}
+glimpse(seso_fish)
+
+seso_fish_sub <- seso_fish %>%
+  filter(Mon == "Jul" | Mon == "Apr" | Mon == "Jun" | Mon == "May")
+
+sites_by_event <- unique(seso_fish_sub[c("SiteID", "EventID", "Date", "Mon", "Year", "Locale", "Location")])
+
+```
+
+Okay going back through this analysis when trying to write the discussion I noticed a problem with the shorezone/NFA analysis:
+- I'm only using presence only data (I've dropped the zeros in the dataframe)
+- The seines that I'm basing the analysis on already include a "lack of randomness" by sampling explicitly in each habitat type. 
+- There are repeat sampling events that are unaccount for right now. 
+
+To fix this I'm proposing a new analysis: 
+Model form: 
+counts (all species) ~ habitat (optional * species_type) + 1|siteID
+
+Other possible terms I could incldue: julian day or month, julian day^2, year
+Initially I will be doing this without julian day because the resampling was done on a yearly or monthly basis
+
+Steps:
+1. make sure fish data includes the 0s for salmon (by site and eventID)
+2. check the residuals of the response (count)
+3. Investigate using poisson or negative binomial (and/or hurdle) to deal with counts
+
+# 1. include 0s
+```{r}
+glimpse(seso_fish) # all fish caught at all sites and eventIDs
+glimpse(sites_by_event) # all events all sites (42 sites, 72 eventIDs)
+# want to make after we filter by salmon that we still have the same number
+
+seso.sal <- seso_fish %>%
+  dplyr::select(-c(X.1, X)) %>%
+  filter(taxon == "fish") %>%
+  mutate(abundance = ifelse(is.na(Length), print(Unmeasured), 1)) %>%
+  pivot_wider(id_cols = c(SiteID:Long1), names_from = SpCode, values_from = abundance, values_fn = sum, values_fill = 0) %>%
+  filter(Mon == "Jul" | Mon == "May" | Mon == "Jun" | Mon == "Apr") %>%
+  dplyr::select(c(SiteID:Long1, SALCOHO, SALCHUM, SALCHIN, SALPINK, SALSOCK)) %>%
+  distinct()
+
+sal.site.by.event <- seso.sal %>%
+  rowwise() %>%
+  mutate(total_sal = sum(SALCOHO:SALSOCK)) %>%
+  dplyr::select(SiteID, EventID, total_sal, Lat1, Long1, Habitat, Mon) %>%
+  distinct()
+
+unique(sal.site.by.event$SiteID) # 42 site
+unique(sal.site.by.event$EventID) # 72 events?
+unique(sal.site.by.event$Habitat)
+
+sal.site.sf <- st_as_sf(sal.site.by.event,
+                         coords = c("Long1", "Lat1"),
+                         crs = 4326)
+# how is this possible?
+# the difference in site numbers is that previously when we subset seso_fish to sitesbyevent we also filtered by seines that occured April - July, so we filtered after we pivoted wider and then selected by species code
+```
+
+Look at catch by hab
+```{r}
+sal.site.by.event %>%
+  ggplot() +
+  geom_col(aes(x = Habitat, y = total_sal))
+
+sal.site.by.event %>%
+  group_by(Habitat) %>%
+  dplyr::summarise(avg = mean(total_sal),
+                   sd = sd(total_sal)) %>%
+  ggplot() + 
+  geom_col(aes(x = Habitat, y = avg)) +
+  geom_errorbar(aes(ymin = avg, ymax = avg + sd, x = Habitat), width = 0.2)
+
+ggplot(sal.site.by.event) +
+  geom_boxplot(aes(x = Habitat, y = total_sal))
+```
+
+pivot longer with 0s
+```{r}
+seso.sal.long <- pivot_longer(seso.sal, cols = c(SALCOHO:SALSOCK), names_to = "SpCode", values_to = "abundance")
+```
+
+number of salmon by habitat and by species by month
+```{r}
+ggplot(seso.sal.long) +
+  geom_col(aes(x = forcats::fct_relevel(Mon, "Apr", "May", "Jun", "Jul"), y = abundance, fill = Habitat), position = position_dodge()) +
+  labs()
+```
+
+
+# 2. Check residuals of response
+```{r}
+# make a quick linear model
+lm1 <- lm(abundance ~ Habitat, data = seso.sal.long)
+summary(lm1)
+
+par(mfrow = c(2,2))
+plot(lm1, which = 1:4) # basically, it all looks super rough because its zero inflated
+
+lm2 <- lm(log(abundance + 1) ~ Habitat, data = seso.sal.long)
+summary(lm2)
+
+plot(lm2, which = 1:4) # still incredibly rough
+
+lm3 <- lm((abundance^0.25) ~ Habitat, data = seso.sal.long)
+summary(lm3)
+
+plot(lm3, which = 1:4) # yea not great
+
+library(lme4)
+# incorporating random effects
+lmer1 <- lmer(abundance ~ Habitat + 1|SiteID, data = seso.sal.long)
+summary(lmer1)
+plot(lmer1)
+
+par(mfrow = c(1,1))
+```
+
+# 3. Model selection with poisson
+Make sure to include the random effects
+reminder for random effects models: there are two ways to estimate mixed effects, REML and ML. 
+ML allows for ocmparisons of different model structures 
+REML does a better job of estimating parameters
+so Model select with ML and REML the final "best" model. 
+
+However because we're using non-Gaussian distribution we dont have the options between ML and REML. 
+I *believe* that lme4::glmer uses ML to estimate the parameters. And hopefully there isn't a big enough difference in
+estimation cause we can't use REML to fit this. 
+
+If you fit using negative binomial distribution use lme4::glmer.nb 
+Check out this FAQ on glmm by Ben Bolker http://bbolker.github.io/mixedmodels-misc/glmmFAQ.html#reml-for-glmms
+```{r}
+table(seso.sal.long$abundance>0)
+prop.table(table(seso.sal.long$abundance>0)) # more zeros than positive number
+table(seso.sal.long$Habitat, seso.sal.long$abundance>0)
+prop.table(table(seso.sal.long$Habitat, seso.sal.long$abundance>0)) # 15 % of the seines have positive occurrence of salmon, whereas 46% of eelgrass seines have no salmon. 
+# 11% kelp has positive salmon, 27% has zero
+
+
+hist(seso.sal.long$abundance)
+
+# try to fit to a glm using poisson distribution
+# this glm framework automatically transforms the data
+seso.sal.long$SiteID <- as.factor(seso.sal.long$SiteID)
+fit.pois <- glmer(abundance ~ Habitat + 1|SiteID, data = seso.sal.long, family = poisson)
+summary(fit.pois) # 
+
+plot(fit.pois)
+pois.resid <- residuals(fit.pois, method = "pearson")
+qqnorm(pois.resid)
+qqline(pois.resid) # so looks like some wild deviation from the qqline esp at the upper end of the qqplot
+
+# we cant fit quasipoisson in lme4
+# try fitting a quasi poission model to better account for the overdispersion
+fit.qp <- glmmPQL(abundance ~ Habitat, random =  ~ 1|SiteID, data = seso.sal.long, family = quasipoisson)
+summary(fit.qp)
+
+qp.resid <- residuals(fit.qp, method = "pearson")
+qqnorm(qp.resid)
+qqline(qp.resid) #honestly this looks so much worse
+
+```
+
+testing overdispersion
+got this fun function from B. Bolker's FAQ on glmms above
+```{r}
+overdisp_fun <- function(model) {
+    rdf <- df.residual(model)
+    rp <- residuals(model,type="pearson")
+    Pearson.chisq <- sum(rp^2)
+    prat <- Pearson.chisq/rdf
+    pval <- pchisq(Pearson.chisq, df=rdf, lower.tail=FALSE)
+    c(chisq=Pearson.chisq,ratio=prat,rdf=rdf,p=pval)
+}
+
+overdisp_fun(fit.pois)
+
+```
+Okay basically theres more dispersion than what is accounted for here, which makes sense when you compare the presence absence 
+Lets move on and try fitting a negative binomial model form for these data
+
+# neg.bin model
+do we need to be including month in these?
+```{r}
+table(sal.site.by.event$Habitat, sal.site.by.event$Mon, sal.site.by.event$total_sal>0)
+
+```
+
+```{r}
+fit.nb <- glmer.nb(abundance ~ Habitat + Mon + (1|SiteID), data = seso.sal.long)
+summary(fit.nb)
+
+nb.resid <- residuals(fit.nb, method = "pearson")
+qqnorm(nb.resid)
+qqline(nb.resid) # still pretty concave, although its better than the quasi or poisson methods, although Tristan thinks that this looks worse than the poisson because at least with the poisson qq plot there's only a few points that diverge whereas in this qqplot there is a consistent group of oberservations going away. 
+plot(fit.nb) # not great, linear decline in the fitted versus pearson residuals. 
+
+
+visreg(fit.nb)
+
+fit.nb2 <- glmer.nb(abundance ~ Habitat + (1|SiteID), data = seso.sal.long)
+
+lrtest(fit.nb, fit.nb2) # significant reduction of deviance when keeping Mon (I think...)
+```
+
+Gosh all these models just don't look great - what if we fit a zero inflated model. 
+```{r}
+# Since we know there is a high abundance of zero in the data try and fit the zero inflated model
+ziglmm <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID), ziformula = ~Habitat + Mon, family = nbinom2, data = seso.sal.long)
+summary(ziglmm)
+
+ziglmm2 <- glmmTMB(abundance ~ Habitat + (1|SiteID), ziformula = ~Habitat, family = nbinom2, data = seso.sal.long)
+summary(ziglmm2)
+
+negbin <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID), family = nbinom2, data = seso.sal.long)
+summary(negbin)
+
+negbin2 <- glmmTMB(abundance ~ Habitat + (1|SiteID), family = nbinom2, data = seso.sal.long)
+summary(negbin2)
+
+AIC(ziglmm); AIC(ziglmm2); AIC(negbin); AIC(negbin2); AIC(fit.pois) # looks the model that has reduced AIC values includes Month (delta ~ 36)
+# looking at the AIC vlaues the zero inflated and just the neg binomial model (that both include Month) have the lowest AIC vlaues
+```
+
+

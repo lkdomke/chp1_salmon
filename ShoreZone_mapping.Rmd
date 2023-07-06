@@ -2,34 +2,71 @@
 title: "ShoreZone mapping"
 author: "Lia Domke"
 date: "10/19/2020"
-output: html_document
+output: 
+  html_document:
+    toc: true
+    theme: united
+    toc_depth: 3
+    toc_float: yes
 editor_options: 
   chunk_output_type: console
 ---
 
+<style type="text/css">
+  body{
+  font-size: 16pt;
+}
+</style>
+
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE) # echo true means code chunks will show through when you knit
+# this is the global call
+knitr::opts_chunk$set(fig.width = 8, fig.height = 6)
+```
+```{r theme settings, include=FALSE}
+# Creates custom base plot theme that can adjust every graph that you use plot_theme for! First create custom plot theme
+
+plot_theme <- function() {
+  theme_bw(base_size = 24, base_family = "Helvetica") %+replace%
+    theme(panel.background  = element_blank(),
+            plot.background = element_rect(fill="transparent", colour=NA), 
+            legend.background = element_rect(fill="transparent", colour=NA),
+            legend.key = element_rect(fill="transparent", colour=NA),
+            panel.grid.major = element_blank(), 
+            panel.grid.minor = element_blank())
+}
+
+# to use ggsave and export plots include argument 'device=cario_pdf' e.g.: 
+# ggsave("name.pdf", device=cairo_pdf, width = 6, height = 6)
 ```
 
 Interested in trying to use shorezone in R
 Want to:
 
 + input shapefiles clipped to seak
+
 + subset to habitat types of interest
 
+# Rmd goal:
+**The final goal is looking at the number of salmon that occur in primarily two "comparative" vegetated habitats.** 
 
-The final goal is looking at the number of salmon that occur in primarily two "comparitive" vegetated habitats. 
 ShoreZone using aerial imagery classified major habitat types, including Zostera marina (Zos) and soft brown kelps (SBR). However, based on the biological classification and habitat and exposure classification it was difficult/impossible to quanitfy just bedrock/sand-gravel habitats. 
+
 So I want to determine if salmon preferentially occur in eelgrass over soft brown kelps. 
+
 Needs:
+
 - total number of salmon caught in eelgrass and understory kelp habitats
+
 - proportion caught in each habitat
+
 - km of eelgrass within the "SESO" region 
+
 - km of soft brown kelps within the "SESO" region
 
 
-Will need diff than normal libraries for mapping
-```{r}
+
+```{r message=FALSE, warning=FALSE}
 library(rgdal)
 library(ggplot2)
 library(rgeos)
@@ -38,21 +75,48 @@ library(maptools)
 library(sf)
 library(dplyr)
 library(tidyr)
+library(forcats) # for fct_relevel
+library(kableExtra)
+library(MASS) # for glm.nb
+library(lmtest) # for lrtest
+library(glmmTMB) # for glmmTMB
+library(DHARMa) # residual checking for glmmTMB models
+library(visreg)
 ```
 
-Input ShoreZone layers
-  Notes about shorezone layers: Through the new shorezone java site (https://alaskafisheries.noaa.gov/mapping/sz_js/index.html?tab=sz&layout=h2#) I downloaded the whole shorezone .mpk file that included shorezone data for Alaska and part of oregon. I changed the extension to .zip and unzipped it in order to load it into qgis (could also use arcgis, but didn't have access-qgis is an open source mac compatible alterative to arcgis). 
-  In qgis (version 3.10.10) I loaded the AK_UNIT_W_ATTRS_W_XSHR shapefile within the v10 file folder. This shapefile had attributes for major biological, habitat, and exposure attributes among others. For attribute definitions and additional information consult shorezone metadata found on the shorezone java site. The file reads in with an inbedded CRS (espg3857), documentation indicates that it is in WGS 1984 Major Auxiliary Sphere. 
+## Input ShoreZone layers
+
+  Notes about shorezone layers: Through the new shorezone [java site](https://alaskafisheries.noaa.gov/mapping/sz_js/index.html?tab=sz&layout=h2#) I downloaded the whole shorezone .mpk file that included shorezone data for Alaska and part of oregon. I changed the extension to .zip and unzipped it in order to load it into qgis (could also use arcgis, but didn't have access-qgis is an open source mac compatible alterative to arcgis). 
+  
+  In qgis (version 3.10.10) I loaded the AK_UNIT_W_ATTRS_W_XSHR shapefile within the v10 file folder. This shapefile had attributes for **major biological, habitat, and exposure attributes** among others. For attribute definitions and additional information consult shorezone metadata found on the shorezone java site. The file reads in with an inbedded CRS (espg3857), documentation indicates that it is in WGS 1984 Major Auxiliary Sphere. 
+
   I then created a polygon in qgis (SESO clipper_1-7-21_espg3857) to clip the large shapefile (extent all of Alaska) to just approximately the expanse of the Southeast Southern Outside waters as defined by the NOAA Nearshore Atlas data. All further analysis in this script will be based on that area. 
+  
   I then projected that clipped lines data into a project CRS appropriate (I think) for this area. I used NAD83(2011) Alaska zone 1 espg 6394 for the SE Panhandle. (file name AK_SESO_espg6394).
+  
   I used vector geometry toolbox to add geom attributes (making sure to use ellopsial rather than the layer CRS), this added length to the different attributes ("length" in meters). I then was able to calculate the total coastline, continuous zostera coastline, and the continuous soft (non-stalked) brown kelp coastline. 
-```{r}
+```{r include=FALSE}
 # read in a feature class
-seak_base <- readOGR(dsn = "../Maps_NOAA&Otter",
+seak_base <- st_read(dsn = "../Maps_NOAA&Otter",
         layer = "southern_seak_espg6394")
 
-attr <- readOGR(dsn = "../Maps_NOAA&Otter", 
-                   layer = "AK_LINES_SESO_espg6394_geom")
+
+attr <- st_read(dsn = "../Maps_NOAA&Otter", 
+                  layer = "AK_LINES_SESO_espg6394_geom")
+
+alaska_base <-  st_read(dsn = "../Maps_NOAA&Otter/",
+                    layer = "SEAK_espg4326_fixed") %>%
+  st_transform(crs = 6349)
+## seperate from the attribute file above we can read in just the zos or sbr layer that we calculated in qgis (used in analysis in the second half of the script below)
+
+zos.layer <- st_read(dsn = "../Maps_NOAA&Otter",
+                     layer = "zos_layer")
+sbr.layer <- st_read(dsn = "../Maps_NOAA&Otter",
+                     layer = "sbr_layer")
+ttl.coast.layer <- st_read(dsn = "../Maps_NOAA&Otter",
+                           layer = "SEAK_seso_espg4326") %>%
+  st_transform(crs = 6394)
+
 par(mfrow=c(1,1))
 ```
 
@@ -60,7 +124,7 @@ In order to filter shapefiles with dplyr have to transform to SF object and then
 ```{r}
 attr_sf <- st_as_sf(attr)
 
-# filter data by zostera/soft brown kelp only
+# filter data by zostera/soft brown kelp only, C = continuous habitat (other option is P, patchy)
 zos <- attr_sf %>%
   filter(ZOS == "C")
 
@@ -73,31 +137,35 @@ sbr_sp <- as(sbr, Class = "Spatial")
 attr_sp <- as(attr_sf, Class = "Spatial")
 ```
 
-Want to measure total distance of the zostera spatiallinesdataframe
-```{r}
-summary(zos_sp)
+Measure total distance of the zostera spatiallinesdataframe
 
-st_length(zos_sp)
+```{r}
+#summary(zos_sp)
+
+#st_length(zos_sp)
 zos_km <- sum(st_length(zos))/1000 # lets use this one
 
 # lets transform the data an dsee how its different
 zos_utm <- spTransform(zos_sp, CRS("+init=epsg:4326"))
 zos_utm_sf <- st_as_sf(zos_utm)
 sum(st_length(zos_utm_sf))/1000 # in kilometers! #
+```
 
-# Zos_km is the same exact measurement that I got with the qGIS geom attributes based analysis (w/ espg 6394)! But not the same as the intergrated shorezone measurement. The shorezone measurement was 840.08 km (difference of 140 km). However if I use what proportion of the caostline is eelgrass or understory kelp and make sure I use the same method of measurement it should be okay. 
+Zos_km is the same exact measurement that I got with the qGIS geom attributes based analysis (w/ espg 6394)! But not the same as the intergrated shorezone measurement. The shorezone measurement was 840.08 km (difference of 140 km). However if I use what proportion of the caostline is eelgrass or understory kelp and make sure I use the same method of measurement it should be okay. 
 
+```{r}
 # Soft brown kelp coastline
-st_length(sbr_sp)
+#st_length(sbr_sp)
 sbr_km <- sum(st_length(sbr))/1000 # lets use this one
 
 # total coastline
-st_length(attr_sp)
+#st_length(attr_sp)
 coast_km <- sum(st_length(attr_sf))/1000
 ```
 
-Lets plot the diff maps real quick - this takes a long time, don't do if we can avoid.
-```{r}
+
+```{r eval=FALSE, include=FALSE}
+# map of the coastaline takes forever
 # high light all three lines at the same time. 
 #plot(seak_base, col = "grey")
 #plot(sbr_sp,  col = "brown", add = TRUE)
@@ -113,22 +181,76 @@ zos_perc <- zos_km/coast_km* 100
 sbr_perc <- sbr_km/coast_km* 100
 ```
 
+
+### Cleaning salmon data
 Initially lets just use data from the Nearshore Atlas seines
 We want to make sure we're only including data from the SESO region and that we look at seines that occurred between April and July (based on when salmon outmigrated in 2017). We also only want seines that happened in eelgrass and understory kelp habitats. 
-```{r data}
+
+```{r data, include=FALSE}
 seso <- read.csv("Data/noaa_region_seso.csv", stringsAsFactors=FALSE, header = TRUE)
 ```
 
-filter by hab
-```{r}
-glimpse(seso)
+
+1. Fix incorrect species
+
+```{r include=FALSE}
+unique(seso$taxon)
+unique(seso$Sp_CommonName) # there are a couple of non fish species, 93 unique species 
+
+incor <- c("SHRMGRA", "BSNAILW", "CRABHEL", "JLYMOON", "JLYCLNG", "TUNICAT", "SHRMDOC", "STARLEA", "SHRMSTI",
+           "SHRMSPO", "CRABHER", "SHRMHIP", "ISOPODG", "CRABGD", "CRABDUN", "SHRMCR", "ISOPODC", "SHRMCOO",
+           "CRABGKE", "UNMYSID", "CRABNKE", "NUDOPAL", "NUDHOOD")
 
 seso_fish <- seso %>%
-  filter(Habitat == "Eelgrass"| Habitat == "Kelp") %>%
-  filter(taxon == "fish")
+  mutate(taxon = ifelse(SpCode %in% incor, "invertebrate", taxon)) %>%
+  filter(taxon == "fish") %>%
+    filter(Habitat == "Eelgrass"| Habitat == "Kelp")
+
+#unique(seso_fish$Sp_CommonName) # now only 70 
 ```
 
-filter by species (salmon only)
+2. Filter by habitat
+
+```{r include=FALSE}
+glimpse(seso_fish)
+
+seso_fish_sub <- seso_fish %>%
+  filter(Mon == "Jul" | Mon == "Apr" | Mon == "Jun" | Mon == "May")
+
+sites_by_event <- unique(seso_fish_sub[c("SiteID", "EventID","Habitat", "Date", "Mon", "Year", "Locale", "Location")])
+
+```
+
+## Mapping sites
+
+Where did all the seines take place? SESO includes from southern Baranof (one eelgrass one kelp), to southern Prince of Wales and South of Ketchikan on the mainland 
+
+```{r echo=FALSE}
+# lets map the data 
+alaska_base_sf <- st_as_sf(alaska_base) %>%
+  st_transform(crs = 4326)
+seso_fish_sf <- st_as_sf(seso_fish_sub,
+                         coords = c("Long1", "Lat1"),
+                         crs = 4326)
+
+ggplot() +
+  geom_sf(data = alaska_base_sf, color = "black") +
+  geom_sf(data = seso_fish_sf, aes(color = Habitat)) +
+  scale_color_manual(values = c("#339900", "#D16103"), name = "Habitat", 
+                   labels = c("Eelgrass", "Understory Kelp")) +
+  coord_sf(xlim = st_bbox(seso_fish_sf)[c(1,3)],
+           ylim = st_bbox(seso_fish_sf)[c(2,4)]) +
+  labs(x = "Longitude", y = "Latitude") + plot_theme()
+```
+
+Notes about this map: 
+
+These are all the seine sites for SESO between May - July. However, this includes repeat samples (so sites sampled multiple times). A few sites were sampled multiple times every month (may, june, july); others were sampled multiple years in a row; and others were only sampled once. The breakdown of this is seen below.
+
+
+## Visualizing just salmon
+### 1. Filter by species (salmon only)
+
 ```{r}
 seso_sal <- seso_fish %>%
   filter(Gear == "BSEINE") %>%
@@ -136,27 +258,83 @@ seso_sal <- seso_fish %>%
            SpCode == "SALCOHO" | SpCode == "SALCHUM")
 ```
 
-Graph species occurrence by month
+### 2. Graph species occurrence by month
+
 ```{r}
 seso_sal$abundance <- as.numeric(ifelse(is.na(seso_sal$Length), paste(seso_sal$Unmeasured), 1))
 
 seso_sal %>%
   ggplot() +
-  geom_bar(mapping = aes(y = abundance, x = Mon, fill = SpCode), stat = "identity")
+  geom_bar(mapping = aes(y = abundance, x = forcats::fct_relevel(Mon, "Apr", "May", "Jun", "Jul", "Sep"), fill = SpCode), stat = "identity") +
+  labs(x = "Months", y = "Total Number of Salmon") + 
+  plot_theme()
 ```
 
 There were fish caught in April, May, June, July (latest seine in July is 7/16/1999) so for now lets keep those four months
-filter by month
+
+### 3. Filter by month
+  
+  Remove September
 ```{r}
 seso_sal <- seso_sal %>%
   filter(Mon == "Apr"|Mon == "May"|Mon == "Jul"|Mon=="Jun")
 ```
 
-What was the total number of salmon caught during this time frame in these two habitats
+# Visualizing the sampling regieme
+
+## 1. Number of EventIDs (seines) sampled by habitat type and month 
+
+This includes repeat seines at sites
+```{r}
+kbl(table(sites_by_event$Habitat, sites_by_event$Mon)) %>%
+  kable_minimal(font_size = 16, full_width = F)
+```
+
+## 2. Total number of seines by habitat
+
+**This includes sites where no salmon were caught**
+```{r}
+kbl(table(sites_by_event$Habitat)) %>%
+  kable_minimal(font_size = 16, full_width = F) %>%
+  add_header_above(c("Habitat" = 1, "Number of seines" = 1))
+```
+
+
+## 3. Total number of seines by habitat **with salmon**
+```{r}
+
+sum_by_seine <- seso_sal %>%
+  group_by(SiteID, EventID, Date, Mon, Habitat) %>%
+  dplyr::mutate(total_abund = sum(abundance)) %>%
+  dplyr::select(-c(abundance, Length, Unmeasured, X, X.1, SpCode, Sp_CommonName, Sp_ScientificName)) %>%
+  distinct() 
+
+kbl(table(sum_by_seine$Habitat)) %>%
+  kable_minimal(font_size = 16, full_width = F) %>%
+  add_header_above(c("Habitat" = 1, "Number of seines with salmon" = 1))
+```
+
+
+## 4. Number of **sites** by habitat type 
+```{r}
+sites <- sites_by_event %>%
+  dplyr::select(-c(EventID, Date, Mon, Year)) %>%
+  distinct()
+
+kbl(table(sites$Habitat)) %>%
+  kable_minimal(font_size = 16, full_width = F) %>%
+  add_header_above(c("Habitat" = 1, "Number of sites" = 1))
+```
+
+**Okay so its pretty clear that there is uneven number of sites and uneven number of events based on all sites.**
+
+# Salmon by habitat
+What was the total number of salmon caught during this time frame in these two habitats?
 ```{r}
 sum <- seso_sal %>%
   group_by(SiteID, EventID, Date, Mon, Habitat, SpCode) %>%
   dplyr::summarise(total_abund = sum(abundance))
+
 ```
 
 Based on raw numbers: 
@@ -166,7 +344,15 @@ x <- sum %>%
   dplyr::summarise(sum = sum(total_abund)) # 11938 total number of salmon caught
 
 total_sal <- x$sum
+total_sal
 
+```
+
+**Total number of salmon caught in all habitats May - July : 11938,**
+**during 72 unique seines, at 42 individual sites.**
+**At 51/72 seines salmon were caught**
+
+```{r}
 x1 <- sum %>%
   ungroup() %>%
   filter(Habitat == "Eelgrass") %>%
@@ -176,14 +362,18 @@ x2 <- sum %>%
   ungroup() %>%
   filter(Habitat == "Kelp") %>%
   dplyr::summarise(sum = sum(total_abund))
+```
 
-zos_sal <- x1$sum # number of salmon caught in zostera
-sbr_sal <- x2$sum # number of salmon caught in understory kelp
+
+```{r}
+zos_sal <- x1$sum # number of salmon caught in zostera 10065
+sbr_sal <- x2$sum # number of salmon caught in understory kelp 1873
 
 # number of salmon expected to be caught based on the percent of coastline each habitat occupies
 exp_zos <- as.vector(total_sal * (zos_perc/100)) # as.vector removes the units
 exp_sbr <- as.vector(total_sal * (sbr_perc/100))
 ```
+
 Lets also calculate based on average numbers to account for sampling effort in each hab
 ```{r}
 # want number of seines in each hab during this time frame
@@ -192,16 +382,16 @@ glimpse(sum)
 n_in_eel <- sum %>%
   filter(Habitat == "Eelgrass") %>%
   ungroup() %>%
-  dplyr::select(EventID, Date) %>%
+  dplyr::select(c(SiteID, EventID, Date)) %>%
   distinct() %>%
-  dplyr::summarise(n()) # total number of salmon caught in seines (all seines all species May - July) in eelgrass 
+  dplyr::summarise(n()) # total number of seines (May - July) in eelgrass (where salmon caught)
 
 n_in_sbr <- sum %>%
   filter(Habitat == "Kelp") %>%
   ungroup() %>%
   dplyr::select(EventID, Date) %>%
   distinct() %>%
-  dplyr::summarise(n()) # total number of salmon caught in seines (all seines all sepcies, May - July) in understory kelp
+  dplyr::summarise(n()) # total number of seines (May - July) in understory kelp (where salmon caught)
 
 avg_eel_sal <- sum %>%
   filter(Habitat == "Eelgrass") %>%
@@ -221,63 +411,72 @@ avg_sal <- sum %>%
   group_by(EventID, Date) %>%
   dplyr::summarise(sum_by_eventID = sum(total_abund)) %>%
   ungroup() %>%
-  dplyr::summarise(mean(sum_by_eventID))
+  dplyr::summarise(mean(sum_by_eventID)) # average number of salmon per seine regardless of hab type ~ 234
+
+exp_avg_zos <- ((zos_sal + sbr_sal) * (as.vector(zos_perc))/100)/(n_in_eel)
+exp_avg_sbr <- ((zos_sal + sbr_sal) * (as.vector(sbr_perc))/100)/(n_in_sbr)
 ```
 
-Lets step up a dataframe that has all this info
-```{r}
-habitat <- c("eelgrass", "kelp")
-expected_perc <- c(as.vector(zos_perc), as.vector(sbr_perc))
-expected_freq <- c(exp_zos, exp_sbr)
-observed_freq <- c(zos_sal, sbr_sal)
-n <- c(n_in_eel$`n()`, n_in_sbr$`n()`)
+Lets step up a dataframe that has all this info to compared expected by observed.
 
-dat <- data.frame(habitat, expected_perc, expected_freq, observed_freq, n)
-```
+The dataframe includes expected frequency of salmon based on the fraction of the coastline zos and sbr occupies multipled by the total number of salmon caught.
 
 One thing that isn't accounted for in this is the sampling effort. 
-If we know that 11938 salmon were caught in 51 seines in two habitats, then based on our 
-H0: if the salmon occur proportionally in eelgrass and kelp habitats then the average number of salmon would be equal to --> 
-total_salmon(prop_of_hab)/# of seines that happened in that habitat
 
-H1: if the salmon do not occur proportionally the average number of salmon would not be equal the 
-eq above
+If we know that 11938 salmon were caught in 51 seines in two habitats, then based on our
 
-But is this complicating this too much?
+**H0: if the salmon occur proportionally in eelgrass and kelp habitats then the average number of salmon/seine would be equal to == total_salmon(prop_of_hab)/# of seines that happened in that habitat**
 
-Eelgrass composes 14% of the coastline that was sampled and soft brown kelps compose 39% of the coastline. The two habitats *can* overlap so there could be over 100% of habitat 'sampled'.
-28 eelgrass sites and 23 kelp sites were sampled between April and July in 1998 and 1999. 
+**H1: if the salmon do not occur proportionally the average number of salmon would not be equal the eq above**
+
+```{r}
+habitat <- c("eelgrass", "kelp")
+perc_coastline <- c(as.vector(zos_perc), as.vector(sbr_perc))
+expected_freq_of_sal <- c(exp_zos, exp_sbr)
+observed_freq_of_sal <- c(zos_sal, sbr_sal)
+n <- c(n_in_eel$`n()`, n_in_sbr$`n()`)
+expected_avg_sal <- c(exp_avg_zos$`n()`, exp_avg_sbr$`n()`)
+observed_avg_sal <- c(avg_eel_sal$`mean(sum_by_eventID)`, avg_sbr_sal$`mean(sum_by_eventID)`)
+
+dat <- data.frame(habitat, perc_coastline, expected_freq_of_sal, observed_freq_of_sal, n, expected_avg_sal, observed_avg_sal)
+kbl(dat) %>%
+  kable_classic(font_size = 16, full_width = T)
+```
+
+What we see in the table above is that based on the total coastline looked at where continuous zostera or continuous soft brown kelps (sbr) occuries. We see that it seems like the H0 is not true; that, when salmon are present (>0), that more salmon are in eelgrass compared to sbr. **But how do we prove this statistically?**
+
+# Crux of problem from analysis above
+
+## 1. comparing uneven averages
+
+*However* the total number of salmon that are expected based on the coastline is equal to ~ 265/seine; however, the observed average of salmon is well above that. So these two numbers aren't comparable. How do we statistically test if we catch more salmon in one habitat over what is expected? 
+
+## 2. coastline sampled not equal to 100%
+
+In addition, eelgrass composes 14% of the coastline that was sampled and soft brown kelps compose 39% of the coastline. In the analysis with these numbers (14, 39) the two habitats *can* overlap in the shorezone shapefiles so there could be over 100% of habitat 'sampled' with the seines. We can fix this (as we do below), but only summing the coastline with continuous eelgrass WHEN sbr is not continuous. 
+
+
+# Mann Whitney test approach
+
+Can we directly compared the average number of salmon catch in each habitat?
 
 First lets look at average salmon catch in each habitat type in seso
-```{r theme settings, include=FALSE}
-# Creates custom base plot theme that can adjust every graph that you use plot_theme for! First create custom plot theme
 
-plot_theme <- function() {
-  theme_bw(base_size = 48, base_family = "Avenir Black") %+replace%
-    theme(panel.background  = element_blank(),
-            plot.background = element_rect(fill="transparent", colour=NA), 
-            legend.background = element_rect(fill="transparent", colour=NA),
-            legend.key = element_rect(fill="transparent", colour=NA),
-            panel.grid.major = element_blank(), 
-            panel.grid.minor = element_blank())
-}
-
-# to use ggsave and export plots include argument 'device=cario_pdf' e.g.: 
-# ggsave("name.pdf", device=cairo_pdf, width = 6, height = 6)
-```
 ```{r}
 sum %>%
   group_by(Habitat) %>%
   dplyr::summarise(avg = mean(total_abund), sd = sd(total_abund)) %>%
   ungroup() %>%
   ggplot() +
-  geom_bar(aes(x = Habitat, y = avg), stat="identity") + 
-  geom_errorbar(mapping = aes(x = Habitat, ymax = avg+sd, ymin = avg-sd), 
-                width = 0, stat = "identity") +
+  geom_bar(aes(x = Habitat, y = avg), stat="identity", color = "black") + 
+  geom_errorbar(mapping = aes(x = Habitat, ymax = avg+sd, ymin = avg), 
+                width = 0.2, stat = "identity") +
+  ylab("Average number of salmon per seine")+
   plot_theme()
 ```
 
 Lets explore the data briefly, is it normally distributed, does it have equal variances?
+
 ```{r}
 hist(sum$total_abund)
 hist((sum$total_abund)^(1/4))
@@ -286,15 +485,19 @@ hist(log(sum$total_abund))
 
 boxplot(sum$total_abund ~ sum$Habitat)
 ```
-Nah they really don't
 
+Nah they really don't
 
 We know that we are comparing the means of categorical variables (indep) against continuous variables (dept) and that the data is nonparametric (i.e. not normal). Should compare means using Mann-Whitney test
 
 Four assumptions of the test:
+
 1. categorical is independent
+
 2. dependent is continuous
-3. independence of observations (no correlation between samples)
+
+**3. independence of observations (no correlation between samples) <- This is where things fall apart, there are repeat sampling of seines)**
+
 4. Need to determine distributins of both categories (in this case hab) 
 have the same shape or different shape
 
@@ -311,9 +514,11 @@ sum %>%
   geom_density(aes(x= log(total_abund), color = Habitat)) +
   plot_theme()
 ```
+
 The distributions of the data by group appear to be similar. They both seem to be positively skewed both if they are log transformed or not. In this case the Mann-Whitney test, *the median can be used to assess the differences in Habitats*
 
-H0: There is no difference between salmon abundances for eelgrass compared to understory kelp 
+H0: There is no difference between salmon abundances for eelgrass compared to understory kelp across all seine locations (72 seines)
+
 ```{r}
 # prep the data take out species covariate
 dat2 <- sum %>%
@@ -330,17 +535,25 @@ wilcox.test(abund_by_eventID ~ Habitat, data = dat2) # defaults to mannU test
 wilcox.test(abund_by_eventID ~ Habitat, data = dat3) # data w/o july seines
 ```
 
-so based on the Mann-Whitney test there is no difference in the median of salmon abundance between eelgrass and understory kelp. 
+so based on the Mann-Whitney test there is no difference in the median of salmon abundance between eelgrass and understory kelp. But is Mann Whitney the best approach to this? 
+
+
 
 Okay so our question then is:
-* When salmon are present, do they occur more in eelgrass or understory kelp? * 
+
+# *When salmon are present, do they occur more in eelgrass or understory kelp?* 
+
 H0: structured habitats regardless of type are equally important for salmon
+
 H1: one structured habitat has more salmon occur in the habitat. So we know that understory kelp occurrs in 39% of the coastline studied and zostera in 14% but thats not equal to 100% so there is some overlap in sbr and zos line features. 
 
 In order to look at exclusively one habitat areas (just eelgrass OR softbrown kelps):
 I went back to QGIS and 'selected features by expression' and did a two part selection. First I selected features where ZOS == 'C' giving selected features of all the continuous zostera. Second I removed all features that were SBR == 'C' resulting in just zostera where soft brown kelps do NOT occur in a continuous way. 
 
 And then I did the same thing for soft brown kelps (sbr)
+
+Here I calculated the total coastline that had either continuous eelgrass OR continuous understory kelp - so the percentages of coastlines of either habitat sums to 100, but it is a *fraction* of the coastline in southern southeast
+
 ```{r}
 zos_wo_sbr <- 761.489 # km of zostera that aren't with sbr
 sbr_wo_zos <- 2556.18 # km of sbr that aren't overlapping with zos
@@ -350,14 +563,17 @@ ttl <- zos_wo_sbr + sbr_wo_zos # total coastline of either EELGRASS OR SOFTBROWN
 zos_wo_sbr_perc <- zos_wo_sbr/ttl*100
 sbr_wo_zos_perc <- sbr_wo_zos/ttl*100
 
-zos_wo_sbr/coast_km
-sbr_wo_zos/coast_km
-ttl/coast_km
+# this is comparison of the zos wwithout sbr compared to the whole coastline looked at, and the total (sum of zos and sbr)
+zos_wo_sbr/coast_km # ~ 10% of the coastline investigated is composed of just zos (not SBR)
+sbr_wo_zos/coast_km # 36% of the coastline is just SBR (no zos)
+ttl/coast_km # and together the zos and sbr composed 47% or just about half of the coastline sampled
 ```
 
 Because we have salmon numbers from *either* eelgrass or understory kelp, lets base our calculations on just the area that has either habitat (not both)
 
 In terms of numbers, this analysis of habitats covers 47% of the total coastline in southern southeast alaska. Just Zostera is 10.8% of the *total* coastline, sbr is 36.5% of the *total* coastline. 
+
+
 ```{r}
 habitat <- c("eelgrass", "kelp")
 expected_perc2 <- c(as.vector(zos_wo_sbr_perc/100), as.vector(sbr_wo_zos_perc/100))
@@ -366,7 +582,25 @@ observed_freq2 <- c(zos_sal, sbr_sal)
 n2 <- c(n_in_eel$`n()`, n_in_sbr$`n()`)
 
 dat_singhab <- data.frame(habitat, expected_perc2, expected_freq2, observed_freq2, n2)
+
+kbl(dat_singhab) %>%
+  kable_minimal(font_size = 16)
 ```
+
+Looking at this table here, we still haven't been able to account for:
+
+- the number of seines that occured in each habitat, yes its only slightly uneven between eelgrass (28) and kelp (23). However, if you include all seines not just the ones where salmon are present, the number of seines in each habitat is even more skewed (eelgrass n = 44, kelp n = 28)
+
+  - One way I thought of accounting for sampling effort is just accounting for the number of seines (averages). Above we tried calculating expected number of salmon for each habitat type by:
+  $ExpectedNumberOfSalmonZostera = (TotalSalmon * ProportionHabZostera)/Number Of Seines In Zostera$
+However, part of me thinks that it isn't... correct to calculate an expected average number of salmon per seine by habitat like this. (Still have the problem that things dont add up either).
+
+- repeat sampling of seines 
+
+
+# Comparing exp to obs salmon - uneven sampling
+
+For the AMSS poster in 2021; I went ahead and just used the raw number of salmon caught without accounting for number of seines. 
 
 ```{r}
 dat_singhab %>%
@@ -385,5 +619,21 @@ dat_singhab %>%
 Set up the chi square test, used this for AMSS Jan 2021 presentation
 ```{r}
 chisq.test(dat_singhab$observed_freq2,p=dat_singhab$expected_perc2)
+```
+
+### map of shorezone layers and area surveyed
+
+```{r, fig.height = 8, fig.width = 16}
+ggplot() +
+  geom_sf(data = alaska_base, fill = "gray") +
+  geom_sf(data = ttl.coast.layer, fill = "darkgray") +
+  geom_sf(data = zos.layer, color = "#339900", size =5) +
+  geom_sf(data = sbr.layer, color = "#D16103", mapping = aes(), size = 5) +
+  geom_sf(data = seso_fish_sf, aes(fill = Habitat), pch = 21, color = "black", size = 3) +
+  scale_fill_manual(values = c("#339900", "#D16103"), name = "Habitat", 
+                   labels = c("Eelgrass", "Understory Kelp")) +
+  coord_sf(xlim = st_bbox(seso_fish_sf)[c(1,3)],
+           ylim = st_bbox(seso_fish_sf)[c(2,4)]) +
+  labs(x = "Longitude", y = "Latitude") + plot_theme()
 ```
 

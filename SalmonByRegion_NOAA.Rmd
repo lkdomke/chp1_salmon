@@ -3,8 +3,8 @@ title: "SalmonByRegion_NOAA"
 author: "Lia Domke"
 date: "10/9/2020"
 output:
-  pdf_document: default
   html_document: default
+  pdf_document: default
 editor_options:
   chunk_output_type: console
 ---

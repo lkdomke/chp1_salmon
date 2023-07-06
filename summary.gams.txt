@@ -1,0 +1,169 @@
+
+==========================================================================
+                                   Dependent variable:                    
+               -----------------------------------------------------------
+                                        abundance                         
+               gam: Negative Binomial(0.248) gam: Negative Binomial(0.235)
+                        link = log                    link = log          
+                            (1)                           (2)             
+--------------------------------------------------------------------------
+MonJul                   -4.828***                                        
+                          (0.781)                                         
+                                                                          
+MonJun                   -3.436***                                        
+                          (0.760)                                         
+                                                                          
+MonMay                    -0.828                                          
+                          (0.833)                                         
+                                                                          
+HabitatKelp                0.464                         0.284            
+                          (0.500)                       (0.513)           
+                                                                          
+s(SiteID).1                                                               
+                                                                          
+                                                                          
+s(SiteID).2                                                               
+                                                                          
+                                                                          
+s(SiteID).3                                                               
+                                                                          
+                                                                          
+s(SiteID).4                                                               
+                                                                          
+                                                                          
+s(SiteID).5                                                               
+                                                                          
+                                                                          
+s(SiteID).6                                                               
+                                                                          
+                                                                          
+s(SiteID).7                                                               
+                                                                          
+                                                                          
+s(SiteID).8                                                               
+                                                                          
+                                                                          
+s(SiteID).9                                                               
+                                                                          
+                                                                          
+s(SiteID).10                                                              
+                                                                          
+                                                                          
+s(SiteID).11                                                              
+                                                                          
+                                                                          
+s(SiteID).12                                                              
+                                                                          
+                                                                          
+s(SiteID).13                                                              
+                                                                          
+                                                                          
+s(SiteID).14                                                              
+                                                                          
+                                                                          
+s(SiteID).15                                                              
+                                                                          
+                                                                          
+s(SiteID).16                                                              
+                                                                          
+                                                                          
+s(SiteID).17                                                              
+                                                                          
+                                                                          
+s(SiteID).18                                                              
+                                                                          
+                                                                          
+s(SiteID).19                                                              
+                                                                          
+                                                                          
+s(SiteID).20                                                              
+                                                                          
+                                                                          
+s(SiteID).21                                                              
+                                                                          
+                                                                          
+s(SiteID).22                                                              
+                                                                          
+                                                                          
+s(SiteID).23                                                              
+                                                                          
+                                                                          
+s(SiteID).24                                                              
+                                                                          
+                                                                          
+s(SiteID).25                                                              
+                                                                          
+                                                                          
+s(SiteID).26                                                              
+                                                                          
+                                                                          
+s(SiteID).27                                                              
+                                                                          
+                                                                          
+s(SiteID).28                                                              
+                                                                          
+                                                                          
+s(SiteID).29                                                              
+                                                                          
+                                                                          
+s(SiteID).30                                                              
+                                                                          
+                                                                          
+s(SiteID).31                                                              
+                                                                          
+                                                                          
+s(SiteID).32                                                              
+                                                                          
+                                                                          
+s(SiteID).33                                                              
+                                                                          
+                                                                          
+s(SiteID).34                                                              
+                                                                          
+                                                                          
+s(SiteID).35                                                              
+                                                                          
+                                                                          
+s(SiteID).36                                                              
+                                                                          
+                                                                          
+s(SiteID).37                                                              
+                                                                          
+                                                                          
+s(SiteID).38                                                              
+                                                                          
+                                                                          
+s(SiteID).39                                                              
+                                                                          
+                                                                          
+s(SiteID).40                                                              
+                                                                          
+                                                                          
+s(SiteID).41                                                              
+                                                                          
+                                                                          
+s(SiteID).42                                                              
+                                                                          
+                                                                          
+s(Mon).1                                                                  
+                                                                          
+                                                                          
+s(Mon).2                                                                  
+                                                                          
+                                                                          
+s(Mon).3                                                                  
+                                                                          
+                                                                          
+s(Mon).4                                                                  
+                                                                          
+                                                                          
+Constant                 6.487***                      4.238***           
+                          (0.643)                       (0.974)           
+                                                                          
+--------------------------------------------------------------------------
+Observations                72                            72              
+Adjusted R2                0.112                         0.145            
+Log Likelihood           -302.217                      -302.241           
+UBRE                      297.217                       304.673           
+==========================================================================
+Note:                                          *p<0.1; **p<0.05; ***p<0.01

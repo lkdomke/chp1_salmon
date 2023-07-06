@@ -12,7 +12,7 @@ library(sf)
 library(dplyr)
 #' 
 #' First load noaa data for seso
-seso <- read.csv("Data/noaa_region_seso.csv", stringAsFactors = FALSE, header = TRUE)
+seso <- read.csv("Data/noaa_region_seso.csv")
 # Then the shapefile
 noaa_shp <- readOGR(dsn = "../../../../K Nielson thmb drive/", layer = "NOAA_SE_sites")
 #' 
@@ -43,3 +43,12 @@ writeOGR(seso_wgs, dsn = "Data", "seso_sites_wgs", driver = "ESRI Shapefile")
 # out of curiousity what projection are the shorezone data in?
 seak_wgs <- readOGR(dsn = "Data/shorezone_APECSDrive", layer = "AK_SEAK_WGS")
 seak_wgs@proj4string
+
+# get string of lat/long for only seso
+head(seso)
+library(dplyr)
+seso_latlong <- seso %>%
+  dplyr::select(c(SiteID, Region, Locale, Habitat, Lat1, Long1)) %>%
+  distinct()
+
+#write.csv(seso_latlong, "../GIS data_WR/seso_latlong_site.csv")

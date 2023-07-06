@@ -299,7 +299,7 @@ dat6 <- dat5 %>%
   left_join(sed_eel, by = c("site_ID", "year")) %>%
   mutate(site = site.x, YYYYMMDD_sed = YYYYMMDD) %>%
   dplyr::select(-c(site.x, place_name.y, site.y, place_name.x, site.y, YYYYMMDD)) %>%
-  dplyr::select(site, site_ID, YYYYMMDD_sed, n_surv1:avg_biom_site_gm2, habitat:longitude, trans_type, sed1_avg:sed2_sd) 
+  dplyr::select(site, site_ID, YYYYMMDD_sed, year, n_surv1:avg_biom_site_gm2, habitat:longitude, trans_type, sed1_avg:sed2_sd) 
 
 #write.csv(dat6, "Data/sal+env+sed_4.13.21.csv")
 ```

@@ -23,6 +23,7 @@ library(MASS)
 library(visreg)
 library(readxl)
 library(ggplot2)
+library(cowplot)
 ```
 # Data Cleaning
 ```{r}
@@ -92,7 +93,8 @@ hist(log(eel_sub2$shoot_dw))
 # skews it the other way... 
 
 
-
+# lets write out the appropriately cleaned 2017 eelgrass data so we can quickly use it to convert eelgrass length to biomass in the future
+#write.csv(eel_sub2, file = "Data/eelgrass_conversions_for_lm_2017")
 ```
 
 # Linear models
@@ -103,6 +105,7 @@ hist(log(eel_sub2$shoot_dw))
 
 dat <- na.omit(data.frame(eel_sub2$shoot_dw, eel_sub2$max_length))
 names(dat) <- c("dw", "max_length")
+range(dat$dw)
 
 plot(dat$dw, dat$max_length)
 # Lets fit an untransformed linear model 
@@ -232,17 +235,53 @@ hab_qrt <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%
 
 hab_lng <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3Af7c43f66-6800-49b0-9b3d-43e8e39abcd0"), stringsAsFactors=FALSE, header=TRUE)
 
-hab_wgt <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3A3b4ab5b8-c023-486f-8a89-7464b9bccf7a"))
+#hab_wgt <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3A3b4ab5b8-c023-486f-8a89-7464b9bccf7a"))
+
+loc <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3Ac9c99ce9-fbdd-4879-a2c9-c90448cdba7b"), stringsAsFactors = FALSE, header = TRUE)
+
+
+```
+## include 2022 too
+```{r}
+# read in 2022
+qrt22 <- read.csv("../APECS_DM/Data/Habitat_data/hab_quadrat_2022_clean_3-14-23.csv")
+lng22 <- read.csv("../APECS_DM/Data/Habitat_data/hab_length_2022_clean_3-14-23.csv")
+
+# read in 2021
+lng21 <- read.csv("../APECS_DM/Data/Habitat_data/hab_length_2021_measuredphyllo_3-9-23.csv")
+qrt21 <- read.csv("../APECS_DM/Data/Habitat_data/hab_quadrat_2021_clean_10-11-22.csv")
 ```
 
-
 ## Data cleaning
+```{r}
+# adjust the site names in qrt data so that we can combine with 
+hab_qrt$site <- as.factor(hab_qrt$site)
+levels(hab_qrt$site)[levels(hab_qrt$site)=="Goats mouth inlet"]<-"Goat Mouth Inlet"
+levels(hab_qrt$site)[levels(hab_qrt$site)=="Naukati Bay"]<-"Naukati"
+levels(hab_qrt$site)[levels(hab_qrt$site)=="South Wadleigh Island"]<-"South Wadleigh"
+levels(hab_qrt$site)[levels(hab_qrt$site)=="Guktu Bay"]<-"Guktu"
+levels(hab_qrt$site)[levels(hab_qrt$site)=="North Fish Egg Island"]<-"North Fish Egg"
+levels(hab_qrt$site)[levels(hab_qrt$site)=="North Fish Egg - kelp"]<-"North Fish Egg-Kelp"
+levels(hab_qrt$site)[levels(hab_qrt$site)=="Natzuhini Bay"]<-"Natzuhini"
+levels(hab_qrt$site)[levels(hab_qrt$site)=="Kaguk Cove"]<-"Kaguk "
+levels(hab_qrt$site)[levels(hab_qrt$site)=="Farallon Bay"]<-"Farallon"
+levels(hab_qrt$site)[levels(hab_qrt$site)=="Chusini Cove"]<-"Chusini-Kladein Flat"
+levels(hab_qrt$site)[levels(hab_qrt$site)=="South Fish Egg Island"]<-"South Fish Egg"
+levels(hab_qrt$site)[levels(hab_qrt$site)=="Baker Island - kelp"]<-"Baker Island - kelp "
+hab_qrt$site <- as.character(hab_qrt$site)
+
+hab_qrt <- left_join(hab_qrt, loc, by = c("site" = "site_2019", "habitat" = "habitat")) %>%
+  dplyr::select(-c(siteID_NOAA, site_2017, site_2018, place_name, study, latitude, longitude,
+                   freshwater, sediment_description, general_description)) %>%
+  filter(habitat == "eelgrass")
+```
+
 We want only the eelgrass sites and need to convert the length measurements (in mm) to cm 
 ```{r}
 glimpse(hab_qrt)
 
 # Want to only extract the quadrat numbers that were used to sample eelgrass sites
-eel_qrts <- na.omit(ifelse(hab_qrt$habitat == "seagrass", paste(hab_qrt$quadrat_ID), NA))
+eel_qrts <- na.omit(ifelse(hab_qrt$habitat == "eelgrass", paste(hab_qrt$quadrat_ID), NA))
 # subset the length data by quadrat at an eelgrass site
 lng_sub <- subset(hab_lng, quadrat_ID %in% eel_qrts)
 levels(as.factor(lng_sub$species)) # only Z. marina, awesome! 
@@ -250,6 +289,23 @@ levels(as.factor(lng_sub$species)) # only Z. marina, awesome!
 lng_sub <- lng_sub %>%
   mutate(length_cm = length/10)
 
+#### for 2022 too 
+eel_qrts22 <- qrt22 %>%
+  filter(habitat_quadrat == "eel") %>%
+  dplyr::select(c(bay_id, quadrat_ID)) # we're actually going to remove this cause sometimes we got eelgrass in non eel quadrats and we want those weights too
+
+eel.lngs22 <- lng22 %>% #subset(lng22, quadrat_ID %in% eel_qrts22$quadrat_ID) %>% # subset lng22 by the quadrats where eelgrass was calc
+  filter(species == "Zostera marina")  %>%# some of the quadrats have a combination of phyllospadix and zostera
+  mutate(length_cm = length_mm/10)
+
+#### for 2021
+qrt21 %>%
+  filter(habitat_quadrat == "eelgrass") %>%
+  dplyr::select(c(bay_id, quadrat_ID))
+
+eel.lng21 <- lng21 %>%
+  filter(species == "Zostera marina") %>%
+  mutate(length_cm = length_mm/10)
 ```
 
 ## Predict based on linear models
@@ -261,6 +317,7 @@ summary(lm2)
 #   log (dw) = -7.67 + 1.55 * log (max_length) 
 # create a new dataframe with just the leaf lengths from 2019
 newx <- data.frame(max_length = as.numeric(lng_sub$length_cm))
+
 # use the log-log linear model (equation above) to calculate the dry mass of the shoot with 95% CI 
 # make sure to exp() the values because its a log-log relationship
 pr.lm <- exp(predict(lm2, newdata = newx, interval = "confidence", level = 0.95))
@@ -280,12 +337,17 @@ str(newdata)
 str(hab_qrt)
 hab_qrt$density <- as.numeric(hab_qrt$density)
 hab_qrt$flowering_shoots <- as.numeric(hab_qrt$flowering_shoots)
+
 # Want to only extract the quadrat numbers that were used to sample eelgrass sites
 dsty <- hab_qrt %>%
-  filter(habitat == 'seagrass') %>%
-  mutate(density_m2 = (density)*4) %>%
-  mutate(flowering_m2 = (flowering_shoots)*4)
-dsty <- dsty[,c(1,8,9,11,12)]
+  filter(habitat == 'eelgrass') %>%
+  mutate(density_m2 = (density)*4, 
+         density_0.25msq = density) %>%
+  mutate(flowering_m2 = (flowering_shoots)*4, 
+         flowering_0.25msq = flowering_shoots)
+dsty <- dplyr::select(dsty, quadrat_ID, site, date, YYYYMMDD, 
+                      habitat, quadrat, total_biomass, density_m2, flowering_m2, 
+                      bay_code, bay_sample, notes, density_0.25msq, flowering_0.25msq)
 
 # calculate average biomass for 15 shoots for each quadrat
 require(dplyr)
@@ -299,8 +361,8 @@ df1 <- df %>%
 # need to add back in site information
 
 df2 <- left_join(df1, dsty, by = "quadrat_ID")
-df3 <- left_join(df2, hab_qrt[,1:2], by = "quadrat_ID")
-#write.csv(df3, "../APECS Master repository/APECS Master repo/ALL_DATA/seagrass_biomass_conversions.csv") 
+df3 <- left_join(df2, hab_qrt[,c("quadrat_ID","site")], by = "quadrat_ID") # want quadratID:site
+#write.csv(df3, "../APECS Master repository/APECS Master repo/ALL_DATA/seagrass_biomass_conversions_baycodes.csv") 
 ```
 
 ### Before July
@@ -312,16 +374,41 @@ summary(lm4)
 #   log (dw) = -7.78 + 1.57 * log (max_length) 
 # create a new dataframe with just the leaf lengths from 2019
 newx_lm4 <- data.frame(max_length = as.numeric(lng_sub$length_cm))
+newx21_lm4 <- data.frame(max_length = as.numeric(eel.lng21$length_cm))
+newx22_lm4 <- data.frame(max_length = as.numeric(eel.lngs22$length_cm))
 # use the log-log linear model (equation above) to calculate the dry mass of the shoot with 95% CI 
 # make sure to exp() the values because its a log-log relationship
 pr.lm4 <- exp(predict(lm4, newdata = newx_lm4, interval = "confidence", level = 0.95))
-
+pr.lm4.21 <- exp(predict(lm4, newdata = newx21_lm4, interval = "confidence", level = 0.95))
+pr.lm4.22 <- exp(predict(lm4, newdata = newx22_lm4, interval = "confidence", level = 0.95))
 # graph these new predicted values
 # create data.frame first
 newdata_lm4 <- cbind(lng_sub, pr.lm4)
-ggplot(newdata_lm4, aes(x = length_cm, y = fit)) + geom_point() + theme_classic() + geom_smooth(method = "lm")
+ggplot(newdata_lm4, aes(x = log(length_cm), y = fit)) + geom_point() + theme_classic() + geom_smooth(method = "lm")
 
+newdata_lm422 <- cbind(eel.lngs22, pr.lm4.22)
 
+newdata_lm421 <- cbind(eel.lng21, pr.lm4.21)
+# because this gives the lng + CI of the individual blades for eelgrass, we're going to rbind it with the rest of the lngths and then read it out
+lng22.red <- lng22 %>%
+  anti_join(newdata_lm422) %>%
+  mutate(length_cm = length_mm/10, 
+         fit = NA,
+         lwr = NA,
+         upr = NA)
+
+lng21.red <- lng21 %>%
+  anti_join(newdata_lm421) %>%
+  mutate(length_cm = length_mm/10,
+         fit = NA,
+         lwr = NA,
+         upr = NA)
+
+lng22.biomass <- rbind(lng22.red, newdata_lm422)
+lng21.biomass <- rbind(lng21.red, newdata_lm421)
+
+#write.csv(lng21.biomass, "Data/hab_length_2021_Zosbiomass_3-14-23.csv")
+#write.csv(lng22.biomass, "Data/hab_length_2022_Zosbiomass_3-14-23.csv")
 ```
 
 
@@ -333,10 +420,12 @@ hab_qrt$density <- as.numeric(hab_qrt$density)
 hab_qrt$flowering_shoots <- as.numeric(hab_qrt$flowering_shoots)
 # Want to only extract the quadrat numbers that were used to sample eelgrass sites
 dsty <- hab_qrt %>%
-  filter(habitat == 'seagrass') %>%
+  filter(habitat == 'eelgrass') %>%
   mutate(density_m2 = (density)*4) %>%
-  mutate(flowering_m2 = (flowering_shoots)*4)
-dsty <- dsty[,c(1,8,9,11,12)]
+  mutate(flowering_m2 = (flowering_shoots)*4) %>%
+  dplyr::select(c(quadrat_ID, density, flowering_shoots, bay_code, 
+                  bay_sample, density_m2, flowering_m2))
+#dsty <- dsty[,c(1,8,9,11,12)]
 
 # calculate average biomass for 15 shoots for each quadrat
 require(dplyr)
@@ -350,8 +439,10 @@ df1_lm4 <- df_lm4 %>%
 # need to add back in site information
 
 df2_lm4 <- left_join(df1_lm4, dsty, by = "quadrat_ID")
-df3_lm4 <- left_join(df2_lm4, hab_qrt[,1:2], by = "quadrat_ID")
+df3_lm4 <- left_join(df2_lm4, hab_qrt[,c("quadrat_ID", "site")], by = "quadrat_ID")
 #write.csv(df3_lm4, "../ALL_DATA/seagrass_biomass_conversions.csv") 
+
+range(df3_lm4$avg_biomass) # 0.00179 - 0.004, 0.02 - 0.5
 ```
 
 # Look at variation in biomass between years by site
@@ -382,6 +473,8 @@ biomass_var_2017 <- eel_biom_dens17 %>%
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 
 biomass_var_2017
+
+# write.csv(eel_biom_dens17, "eelgrass_biom_density_2017.csv")
 ```
 
 ```{r}
