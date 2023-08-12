@@ -1736,7 +1736,7 @@ hab <- ggplot(pr.hab.df) +
   geom_jitter(data = pink.long, aes(x = Habitat, y = log(abundance + 1))) +
   ylim(c(-0.1, 20)) +
   plot_theme() +
-  labs(y = "Log Average Pink Salmon (#/seine)")
+  labs(y = "Log Pink Salmon (#/seine)")
 hab
 
 #okay doy isn't really working because the confidence interval predicted is so large it makes it hard to see the pattern in doy
@@ -1862,7 +1862,7 @@ habc <- ggplot(pr.habc.df) +
   geom_jitter(data = chum.long, aes(x = Habitat, y = log(abundance+1))) +
   ylim(c(-0.1, 7)) +
   plot_theme() +
-  labs(y = "Log Average Chum Salmon (#/seine)")
+  labs(y = "Log Chum Salmon (#/seine)")
 habc
 
 # now doy

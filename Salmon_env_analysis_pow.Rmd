@@ -1362,11 +1362,12 @@ Interaction doesn't appear to be significant, remove intx and then create full m
 pink.full.mod <- glm.nb(SALPINK ~ year + juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km + sed1_avg, data = fish, control=glm.control(maxit = 100), init.theta = 0.495)
 
 summary(pink.full.mod)
-
+plot(pink.full.mod)
 # refit w.o pot outliers
 pink.full.mod.red <- glm.nb(SALPINK ~ year + juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km + sed1_avg, data = fish[-c(16, 37)], control=glm.control(maxit = 100), init.theta = 0.495)
 
 summary(pink.full.mod.red)
+plot(pink.full.mod)
 
 # remove a couple of the non significant parameters i.e. in this case year
 pink.mod1 <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km + sed1_avg, data = fish, control=glm.control(maxit = 100), init.theta = 0.495)
@@ -1380,7 +1381,7 @@ pink.mod1.red <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2
 
 summary(pink.mod1.red)
 anova(pink.full.mod.red, pink.mod1.red, test = "Chisq") # pref for reduced model 
-
+plot(pink.mod1.red)
 # lets also drop sed1_avg and maybe instead include sed2_avg (dont include together cause their highly correlated -- makes sense)
 # first drop sed1
 pink.mod2 <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km, data = fish, control=glm.control(maxit = 100), init.theta = 0.495)
@@ -1484,6 +1485,7 @@ summary(pink.mod2)
 Use pink.mod2
 ```{r}
 visreg(pink.mod2, scale = "response")
+
 # avg_density, avg_biom, juliday, dist anad
 
 # create final pink plots
@@ -1524,7 +1526,7 @@ pink4
 pinks <- (pink1 + pink2) /
   (pink3 + pink4) + plot_annotation(tag_levels = "a")
 
-pink.plot <- add_global_label(pinks, Ylab = "Average Pink Salmon (#/seine)",
+pink.plot <- add_global_label(pinks, Ylab = "Pink Salmon (#/seine)",
                  size = 8.25)
 pink.plot
 summary(pink.mod2)
@@ -1747,7 +1749,7 @@ plot_grid(chum_jd, chum_jd_pred)
 chum1 <- visreg(chum.mod5, "juli_date", 
        scale = "response", gg = TRUE, rug = F, partial = F,line.par = list(col = 'black')) + 
   xlab(expression(paste("Day of year"))) + 
-  ylab("Average Chum Salmon (#/seine)") + coord_cartesian(ylim = c(0,300)) +
+  ylab("Chum Salmon (#/seine)") + coord_cartesian(ylim = c(0,300)) +
     geom_point(data = fish, aes(x = juli_date, y = SALCHUM)) + 
   plot_theme()
 chum1
