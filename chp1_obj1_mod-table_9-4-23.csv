@@ -1,0 +1,5 @@
+"","model.names","AIC","AICc","BIC","method","family","delta.BIC","delta.AIC","delta.AICc"
+"1","abundance ~ Habitat + Mon + (1 | SiteID)",411.29,413.04,427.23,"REML","Neg. Binomial",0,0,0
+"2","abundance ~ Habitat + (1 | Mon) + (1 | SiteID)",426.94,427.85,438.32,"REML","Neg. Binomial",11.09,15.65,14.81
+"3","abundance ~ Habitat + Mon + (1 | SiteID)",419.43,421.18,435.37,"ML","Neg. Binomial",0,0,0
+"4","abundance ~ Habitat + Mon + (1 | SiteID)",421.43,423.72,439.65,"ML","Zero-inflated Neg. Binomial",4.28,2,2.54

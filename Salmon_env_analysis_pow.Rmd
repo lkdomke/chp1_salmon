@@ -1420,7 +1420,7 @@ summary(pink.mod3.red)
 anova(pink.mod2.red, pink.mod3.red) # sed2 does not sig contribute to the model
 ##############
 
-AICc(pink.intx);AICc(pink.full.mod);AICc(pink.mod1);AICc(pink.mod2);AICc(pink.mod3)
+AICc(pink.intx);AICc(pink.full.mod);AICc(pink.mod1);AICc(pink.mod2);AICc(pink.mod2.2); AICc(pink.mod3)
 AICc(pink.intx.red);AICc(pink.full.mod.red);AICc(pink.mod1.red);AICc(pink.mod2.red);AICc(pink.mod3.red)
 
 ```
@@ -1448,6 +1448,22 @@ plot(pink.mod2.red, which = 1:4)
 AICc(pink.mod2.red);AICc(pink.mod2) # are these really comparable if theres not the same degrees of freedom. 
 ```
 
+### zero infl w best model
+```{r}
+pink.zeroinf <- zeroinfl(SALPINK ~ juli_date + I(juli_date^2) +
+                           avg_biom_site_gm2 + avg_density + dist_anad_km, 
+                         data = fish, dist = "negbin",
+                         link = "log")
+# okay so this doesn't fit meaning its likely doesn't have a sloped likelihood field and not informative so yea maybe not the choice
+
+summary(pink.zeroinf)
+
+AICc(pink.zeroinf); AICc(pink.mod2)
+
+summary(pink.mod2)
+```
+
+
 ### Candidate model table
 ```{r}
 cand.models <- list() # create an empty list to include all the candidate models
@@ -1464,17 +1480,23 @@ cand.models[[6]] <- pink.mod3
 Modnames <- paste (c(formula(pink.full.mod), formula(pink.intx), formula(pink.mod1), formula(pink.mod2), formula(pink.mod2.2), formula(pink.mod3)))
 
 # calculate AICc, delta AICc, and AICcw using candidate models above each named
-pink.cand.tbl <- aictab(cand.set = cand.models, modnames = Modnames, sort = TRUE)
+pink.cand.tbl.aic <- aictab(cand.set = cand.models, modnames = Modnames, sort = TRUE, second.ord = T)
+pink.cand.tbl.bic <- bictab(cand.set = cand.models, modnames = Modnames, sort = TRUE)
 
 # round values to 2 decimal places
-pink.cand.tbl <- pink.cand.tbl %>%
-  mutate_if(is.numeric, round, digits = 2)
+pink.cand.tbl <- pink.cand.tbl.aic %>%
+  as.data.frame() %>%
+  left_join(pink.cand.tbl.bic, by = c("Modnames", "K")) %>%
+  as.data.frame() %>%
+  mutate_if(is.numeric, round, digits = 2) %>%
+  dplyr::select(c(Modnames, K, AICc, Delta_AICc, AICcWt, BIC, Delta_BIC, BICWt))
 
 colnames(pink.cand.tbl)[2] <- ("df") # rename column 2 (K) as df
 
 pink.cand.tbl
+# okay just as a note AIC only values gets to the same result as using LRTT testing
 
-#write.csv(pink.cand.tbl, file = "Data/Pink_candidate_mod_tbl.csv")
+#write.csv(pink.cand.tbl, file = "Data/Pink_candidate_mod_tbl_9-4-23.csv")
 
 # Chi square test of full model (w/o intx) and best fitted model, reported in proposal results 
 anova(pink.full.mod, pink.mod2, test="Chisq")
@@ -1531,7 +1553,7 @@ pink.plot <- add_global_label(pinks, Ylab = "Pink Salmon (#/seine)",
 pink.plot
 summary(pink.mod2)
 
-tab_model(pink.mod2)
+tab_model(pink.mod2, transform = NULL)
 ```
 
 
@@ -1638,6 +1660,7 @@ anova(chum.mod5, chum.mod7, test = "Chisq") # average density sig contribs to mo
 # so keep dates and avg density
 AICc(chum.mod7);AICc(chum.mod6);AICc(chum.mod5);AICc(chum.mod4)
 
+AICc(chum.full.mod); AICc(chum.mod2); AICc(chum.mod3); AICc(chum.mod4); AICc(chum.mod5); AICc(chum.mod6);AICc(chum.mod7)
 # chum models that include juli date + juli date ^2 + avg_density (and one with sed2) are pretty similar looking at AICc values
 # Because of the ideas of parsimony - lets go with the smaller model (chum.mod5)
 
@@ -1645,6 +1668,21 @@ AICc(chum.mod7);AICc(chum.mod6);AICc(chum.mod5);AICc(chum.mod4)
 par(mfrow = c(2,2))
 plot(chum.mod5, which = 1:4) # some concavity in the QQ plot, and potentially an increase in residuals across the predicted values. 
 fish[6,] # one potential outlier at 6 = guktu bay where 1 chum was caught
+```
+
+
+### zero infl w best model
+```{r}
+chum.zeroinf <- zeroinfl(SALCHUM ~ juli_date + I(juli_date^2) + avg_density, 
+                         data = fish, dist = "negbin",
+                         link = "log")
+# okay so this doesn't fit meaning its likely doesn't have a sloped likelihood field and not informative so yea maybe not the choice
+
+summary(chum.zeroinf)
+
+AICc(chum.zeroinf); AICc(chum.mod5)
+
+summary(chum.mod5)
 ```
 
 ### Candidate model table
@@ -1664,17 +1702,23 @@ cand.models[[9]] <- chum.mod7
 Modnames <- paste (c(formula(chum.full.mod), formula(chum.intx), formula(chum.intx2), formula(chum.mod2), formula(chum.mod3), formula(chum.mod4), formula(chum.mod5), formula(chum.mod6), formula(chum.mod7)))
 
 # calculate AICc, delta AICc, and AICcw using candidate models above each named
-chum.cand.tbl <- aictab(cand.set = cand.models, modnames = Modnames, sort = TRUE)
+chum.cand.tbl.aic <- aictab(cand.set = cand.models, modnames = Modnames, sort = TRUE, second.ord=T)
+chum.cand.tbl.bic <- bictab(cand.set = cand.models, modnames = Modnames, sort = T)
 
 # round values to 2 decimal places
-chum.cand.tbl <- chum.cand.tbl %>%
-  mutate_if(is.numeric, round, digits = 2)
+chum.cand.tbl <- chum.cand.tbl.aic %>%
+  as.data.frame() %>%
+  left_join(chum.cand.tbl.bic, by = c("Modnames", "K")) %>%
+  as.data.frame() %>%
+  mutate_if(is.numeric, round, digits = 2) %>%
+  dplyr::select(c(Modnames, K, AICc, Delta_AICc, AICcWt, BIC, Delta_BIC, BICWt))
+
 
 colnames(chum.cand.tbl)[2] <- ("df") # rename column 2 (K) as df
 
 chum.cand.tbl
 
-#write.csv(chum.cand.tbl, file = "Data/Chum_candidate_mod_tbl.csv")
+#write.csv(chum.cand.tbl, file = "Data/Chum_candidate_mod_tbl_9-4-23.csv")
 
 # Chi square test of full model (w/o intx) and best fitted model, reported in proposal results 
 anova(chum.full.mod, chum.mod5, test="Chisq")
@@ -1770,7 +1814,7 @@ chum.plots <- chum1 + chum2 + plot_annotation(tag_levels="a")
 library(sjPlot)
 summary(pink.mod2)
 summary(chum.mod5)
-tab_model(chum.mod5, pink.mod2,
+tab_model(chum.mod5, pink.mod2, transform = NULL,
           dv.labels = c("Juvenile Chum Salmon", "Juvenile Pink Salmon"),
           show.est = TRUE, string.est = "Estimate", show.r2 = FALSE,
           show.stat = TRUE, string.stat = "Statistic",

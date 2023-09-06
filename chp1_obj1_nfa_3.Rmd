@@ -1,0 +1,636 @@
+---
+title: "chp1_obj1_nfa_3"
+author: "Lia Domke"
+date: "9/1/2023"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+This is whats included in the dissertation as of sept 5, 2023
+
+```{r}
+sal.long.sp <- read.csv("chp1.sal.long.sp_9-1-23.csv")
+```
+
+#library
+```{r}
+library(tidyverse)
+library(glmmTMB)
+library(AICcmodavg)
+library(pscl) # vuong test
+library(visreg)
+library(patchwork)
+```
+```{r theme settings, include=FALSE}
+# Creates custom base plot theme that can adjust every graph that you use plot_theme for! First create custom plot theme
+
+plot_theme <- function() {
+  theme_bw(base_size = 24, base_family = "Helvetica") %+replace%
+    theme(panel.background  = element_blank(),
+            plot.background = element_rect(fill="transparent", colour=NA), 
+            legend.background = element_rect(fill="transparent", colour=NA),
+            legend.key = element_rect(fill="transparent", colour=NA),
+            panel.grid.major = element_blank(), 
+            panel.grid.minor = element_blank())
+}
+
+# to use ggsave and export plots include argument 'device=cario_pdf' e.g.: 
+# ggsave("name.pdf", device=cairo_pdf, width = 6, height = 6)
+```
+adding global label to plot - function
+```{r adding global label}
+add_global_label <- function(pwobj, Xlab = NULL, Ylab = NULL, Xgap = 0.03, Ygap = 0.03, ...) {
+    ylabgrob <- patchwork::plot_spacer()
+    if (!is.null(Ylab)) {
+        ylabgrob <- ggplot() +
+            geom_text(aes(x = .5, y = .5), label = Ylab, angle = 90, ...) +
+            theme_void()
+    }
+    if (!is.null(Xlab)) {
+        xlabgrob <- ggplot() +
+            geom_text(aes(x = .5, y = .5), label = Xlab, ...) +
+            theme_void()
+    }
+    if (!is.null(Ylab) & is.null(Xlab)) {
+        return((ylabgrob + patchworkGrob(pwobj)) + 
+            patchwork::plot_layout(widths = 100 * c(Ygap, 1 - Ygap)))
+    }
+    if (is.null(Ylab) & !is.null(Xlab)) {
+        return((ylabgrob + pwobj) + 
+            (xlabgrob) +
+            patchwork::plot_layout(heights = 100 * c(1 - Xgap, Xgap),
+                                   widths = c(0, 100),
+                                   design = "
+                                   AB
+                                   CC
+                                   "
+            ))
+    }
+    if (!is.null(Ylab) & !is.null(Xlab)) {
+        return((ylabgrob + pwobj) + 
+            (xlabgrob) +
+            patchwork::plot_layout(heights = 100 * c(1 - Xgap, Xgap),
+                                   widths = 100 * c(Ygap, 1 - Ygap),
+                                   design = "
+                                   AB
+                                   CC
+                                   "
+            ))
+    }
+    return(pwobj)
+}
+
+```
+Also - you need to create box plots of salmon catch between month and eelgrass type
+
+Okay we've done this mulitple times I'm hoping this is the last time: 
+We're comparing salmon counts by species (Chum and Pink) across habitat types and incorporating sampling timeframe as well as random effects of SiteID because we have 12 sites that we're resampled
+
+Following Diggle et al 2002 "top-down" strategy
+1. test random effects structure (this hasto be done using method = "REML")
+
+Sal ~ Habitat + (1|Mon) + (1|SiteID)
+Sal ~ Habitat + (Mon|SiteID)
+Sal ~ Habitat + Mon + (1|SiteID)
+
+Compare the model and random structure using AIC, BIC, likelihood ratio test
+
+2. Switch to method = "ML", and determine fixed effects
+We only have two potential fixed effects (month and/or habitat)
+And we're truly interested in Habitat and Month is important thing we want to account for
+In the end it'll include both these factors
+
+3. Refit ideal random and fixed effect structure with method = 'REML'
+
+We're going to use glmmTMB and see if we can get generalized mixed models for both the 
+negative binomial and zeroinflated NB to work
+
+# create each sp df
+```{r}
+glimpse(sal.long.sp)
+
+chum.long <- sal.long.sp %>%
+  filter(SpCode == "SALCHUM")
+
+pink.long <- sal.long.sp %>%
+  filter(SpCode == "SALPINK")
+```
+Also - you need to create box plots of salmon catch between month and eelgrass type
+
+# boxplots across species and habitat and month
+```{r}
+p1 <- sal.long.sp %>%
+   mutate(Mon = ifelse(Mon == "Apr", "April", Mon),
+         Mon = ifelse(Mon == "Jun", "June", Mon),
+         Mon = ifelse(Mon == "Jul", "July", Mon)) %>%
+  filter(SpCode == "SALCHUM") %>%
+  ggplot() +
+  geom_boxplot(aes(x = Mon, y = abundance, fill = Habitat)) +
+  plot_theme()  +
+  scale_fill_manual(values = c("#339900", "#D16103"),
+                    labels = c("Eelgrass", "Understory kelp"))+
+  scale_x_discrete(limits = c("April", "May", "June", "July")) +
+  labs(x = "Month", y = Number~of~salmon~(no.~seine^-1)) +
+  theme(legend.position = "none")
+
+p1
+
+p2 <- sal.long.sp %>%
+   mutate(Mon = ifelse(Mon == "Apr", "April", Mon),
+         Mon = ifelse(Mon == "Jun", "June", Mon),
+         Mon = ifelse(Mon == "Jul", "July", Mon)) %>%
+  filter(SpCode == "SALPINK") %>%
+  ggplot() +
+  geom_boxplot(aes(x = Mon, y = abundance, fill = Habitat)) +
+  plot_theme()  +
+  scale_fill_manual(values = c("#339900", "#D16103"),
+                    labels = c("Eelgrass", "Understory kelp"))+
+  scale_x_discrete(limits = c("April", "May", "June", "July")) +
+  labs(x = "Month", y = NULL) +
+  theme(legend.position = "none")
+
+p2
+
+plot <- p1 + p2 + plot_annotation(tag_levels = "a") +
+  plot_layout(guides = "collect") & theme(legend.position = "bottom")
+plot
+
+#ggsave("chp1_obj1_nfa_abund_plots.png", plot = plot, width = 14, height = 9)
+```
+## average by spe
+```{r}
+sal.long.sp %>%
+  filter(SpCode == "SALCHUM" | SpCode == "SALPINK") %>%
+  group_by(SpCode, Habitat) %>%
+  dplyr::summarise(avg = mean(abundance),
+                   sd = sd(abundance))
+
+sal.long.sp %>%
+  filter(SpCode == "SALCHUM" | SpCode == "SALPINK") %>%
+  group_by(SpCode, Mon) %>%
+  dplyr::summarise(avg = mean(abundance),
+                   sd = sd(abundance))
+```
+
+
+# Chum glmmTMB
+## random effects structure testing
+```{r}
+ch.re1 <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID), data = chum.long, REML = T, family = nbinom2(link = "log"))
+summary(ch.re1)
+
+ch.re2 <- glmmTMB(abundance ~ Habitat + (1|Mon) + (1|SiteID), data = chum.long, REML = T, family = nbinom2(link = "log"))
+summary(ch.re2)
+
+ch.re3 <- glmmTMB(abundance ~ Habitat + (Mon|SiteID), data = chum.long, REML = T, family = nbinom2(link = "log"))
+summary(ch.re3)
+
+AICc(ch.re1); AICc(ch.re2); AICc(ch.re3)
+BIC(ch.re1); BIC(ch.re2); BIC(ch.re3)
+# the best random effects model is the mon as a fixed factor
+```
+
+```{r}
+p.re1 <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID), data = pink.long, REML = T, family = nbinom2(link = "log"))
+summary(p.re1)
+
+p.re2 <- glmmTMB(abundance ~ Habitat + (1|Mon) + (1|SiteID), data = pink.long, REML = T, family = nbinom2(link = "log"))
+summary(p.re2)
+
+p.re3 <- glmmTMB(abundance ~ Habitat + (Mon|SiteID), data = pink.long, REML = T, family = nbinom2(link = "log"))
+summary(p.re3)
+
+AICc(p.re1); AICc(p.re2); AICc(p.re3)
+BIC(p.re1); BIC(p.re2); BIC(p.re3)
+```
+
+Okay for the two species - having a random effects structure of slope rather than just random intercept structure is not possilbe 
+
+For both species the random intercept of site is the best form using minimized AIC and BIC
+
+2. Switch to method = "ML", and determine fixed effects
+We only have two potential fixed effects (month and/or habitat)
+And we're truly interested in Habitat and Month is important thing we want to account for
+In the end it'll include both these factors
+
+## determine fixed effects structure
+```{r}
+chum1 <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID), data = chum.long,
+                 REML = F, family = nbinom2(link = "log"))
+summary(chum1)
+
+# all these are significant so this is the best model? especially since I decided that doy or month wasn't actually continuous rather clustered within certain time frames
+# woo here's the chum model
+AICc(chum1)
+BIC(chum1)
+# we should test the zero inflated model tho too
+```
+
+
+```{r}
+pink1 <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID), data = pink.long, REML = F, family = nbinom2(link = "log"))
+summary(pink1)
+
+pink2 <- glmmTMB(abundance ~ Habitat + Mon, data = pink.long, REML = F, family = nbinom2(link = "log"))
+summary(pink2)
+
+AICc(pink1); AICc(pink2)
+BIC(pink1); BIC(pink2)
+# the one without random effects is slightly better; however, we know there is structure in it so i'm not inclined to drop it.
+```
+
+## is zero inflated better?
+Okay following the vignette about glmmTMB we can fit zero inflated negative binomial models using ziformula = ~1
+```{r}
+chum.zinf <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID), data = chum.long, 
+                 REML = F, family = nbinom2(link = "log"),
+                 ziformula = ~1)
+summary(chum.zinf)
+
+chum.hurd <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID), data = chum.long, 
+                 REML = F, family = truncated_nbinom2(link = "log"),
+                 ziformula = ~1)
+summary(chum.hurd)
+
+AICc(chum1); AICc(chum.zinf); AICc(chum.hurd)
+BIC(chum1); BIC(chum.zinf); BIC(chum.hurd)
+
+# vuong test compares two non-nested hypothesis test
+# good way of comparing model formulas that are non nested such as zero inflated and non-zero inflated analogs
+# vuong(chum1, chum.zinf)
+# okay I dont think this works with random effects models, so we'll rely on AIC/BIC values
+```
+
+```{r}
+pink.zinf <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID), data = pink.long, 
+                 REML = F, family = nbinom2(link = "log"),
+                 ziformula = ~1)
+summary(pink.zinf)
+
+pink.hurd <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID), data = pink.long, 
+                 REML = F, family = truncated_nbinom2(link = "log"),
+                 ziformula = ~1)
+summary(pink.hurd)
+
+AICc(pink1); AICc(pink.zinf); AICc(pink.hurd)
+BIC(pink1); BIC(pink.zinf); BIC(pink.hurd)
+
+```
+
+
+For both species the normal negative binomial reduces AICc / BIC values more than the 
+zero inflated negbin or the hurdle model 
+
+3. Refit ideal random and fixed effect structure with method = 'REML'
+# final models
+```{r}
+chum.final <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID), 
+                      data = chum.long, REML = T, family = nbinom2(link = "log"))
+summary(chum.final)
+
+pink.final <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID),
+                      data = pink.long, REML = T, family = nbinom2(link = "log"))
+summary(pink.final)
+```
+
+
+#  model selection table
+```{r}
+cand.models <- list() # create an empty list to include all the candidate models
+cand.models[[1]] <- ch.re1 # add in  models one at a time
+cand.models[[2]] <- ch.re2
+
+cand.models2 <- list()
+cand.models2[[1]] <- chum1
+cand.models2[[2]] <- chum.zinf
+
+Modnames.re <- data.frame(names = c(paste(c(formula(ch.re1), formula(ch.re2)))),
+                           method = c("REML", "REML"),
+                           family = c("Neg. Binomial", "Neg. Binomial"))
+
+Modnames.fix <- data.frame(names = c(paste(c(formula(chum1), formula(chum.zinf)))),
+                           method = c("ML", "ML"),
+                           family = c("Neg. Binomial", "Zero-inflated Neg. Binomial"))
+
+# create dataframe with model names. 
+cand.models
+
+d <- data.frame()
+for(i in 1:length(cand.models)) {
+  mod <- cand.models[[i]]
+  name <- paste(c(formula(mod)))
+  aic <- AIC(mod)
+  aicc <- AICc(mod)
+  bic <- BIC(mod)
+  #df <- mod$df.null # this doesn't work with re models
+  sums <- summary(mod)
+  #dev.expl <- sums$dev.expl*100 # also not in re models
+  temp <- data.frame(model.names = name, AIC = aic, 
+                     AICc = aicc, BIC = bic)
+  d <- rbind(d, temp)
+}
+
+# now for the fx effects model
+d2 <- data.frame()
+for(i in 1:length(cand.models2)) {
+  mod <- cand.models2[[i]]
+  name <- paste(c(formula(mod)))
+  aic <- AIC(mod)
+  aicc <- AICc(mod)
+  bic <- BIC(mod)
+  #df <- mod$df.null # this doesn't work with re models
+  sums <- summary(mod)
+  #dev.expl <- sums$dev.expl*100 # also not in re models
+  temp <- data.frame(model.names = name, AIC = aic, 
+                     AICc = aicc, BIC = bic)
+  d2 <- rbind(d2, temp)
+}
+
+d.chum.re <- d %>%
+  left_join(Modnames.re, by = c("model.names" = "names")) %>%
+  arrange(BIC) %>%
+  mutate(delta.BIC = BIC - min(BIC),
+         delta.AIC = AIC - min(AIC),
+         delta.AICc = AICc - min(AICc)) %>%
+  mutate_if(is.numeric, round, digits = 2)
+
+d.chum.fx <- d2 %>%
+  mutate(family = c("Neg. Binomial", "Zero-inflated Neg. Binomial")) %>%
+  left_join(Modnames.fix, by = c("model.names" = "names", "family")) %>%
+  arrange(BIC) %>%
+  mutate(delta.BIC = BIC - min(BIC),
+         delta.AIC = AIC - min(AIC),
+         delta.AICc = AICc - min(AICc)) %>%
+  mutate_if(is.numeric, round, digits = 2)
+
+d.chum <- rbind(d.chum.re, d.chum.fx)
+# best model includes random effect of site and habitat and month as fixed using negative binomial not zero inflated
+
+#all.models <- as.data.frame(Modnames.all)
+#write.csv(d.chum, "chp1_obj1_chum-mod-table_9-4-23.csv")
+```
+
+for pink now
+```{r}
+cand.models <- list() # create an empty list to include all the candidate models
+cand.models[[1]] <- p.re1 # add in  models one at a time
+cand.models[[2]] <- p.re2
+
+cand.models2 <- list()
+cand.models2[[1]] <- pink1
+cand.models2[[2]] <- pink.zinf
+
+Modnames.re <- data.frame(names = c(paste(c(formula(p.re1), formula(p.re2)))),
+                           method = c("REML", "REML"),
+                           family = c("Neg. Binomial", "Neg. Binomial"))
+
+Modnames.fix <- data.frame(names = c(paste(c(formula(pink1), formula(pink.zinf)))),
+                           method = c("ML", "ML"),
+                           family = c("Neg. Binomial", "Zero-inflated Neg. Binomial"))
+
+# create dataframe with model names. 
+cand.models
+
+d <- data.frame()
+for(i in 1:length(cand.models)) {
+  mod <- cand.models[[i]]
+  name <- paste(c(formula(mod)))
+  aic <- AIC(mod)
+  aicc <- AICc(mod)
+  bic <- BIC(mod)
+  #df <- mod$df.null # this doesn't work with re models
+  sums <- summary(mod)
+  #dev.expl <- sums$dev.expl*100 # also not in re models
+  temp <- data.frame(model.names = name, AIC = aic, 
+                     AICc = aicc, BIC = bic)
+  d <- rbind(d, temp)
+}
+
+# now for the fx effects model
+d2 <- data.frame()
+for(i in 1:length(cand.models2)) {
+  mod <- cand.models2[[i]]
+  name <- paste(c(formula(mod)))
+  aic <- AIC(mod)
+  aicc <- AICc(mod)
+  bic <- BIC(mod)
+  #df <- mod$df.null # this doesn't work with re models
+  sums <- summary(mod)
+  #dev.expl <- sums$dev.expl*100 # also not in re models
+  temp <- data.frame(model.names = name, AIC = aic, 
+                     AICc = aicc, BIC = bic)
+  d2 <- rbind(d2, temp)
+}
+
+d.pink.re <- d %>%
+  left_join(Modnames.re, by = c("model.names" = "names")) %>%
+  arrange(BIC) %>%
+  mutate(delta.BIC = BIC - min(BIC),
+         delta.AIC = AIC - min(AIC),
+         delta.AICc = AICc - min(AICc)) %>%
+  mutate_if(is.numeric, round, digits = 2)
+
+d.pink.fx <- d2 %>%
+  mutate(family = c("Neg. Binomial", "Zero-inflated Neg. Binomial")) %>%
+  left_join(Modnames.fix, by = c("model.names" = "names", "family")) %>%
+  arrange(BIC) %>%
+  mutate(delta.BIC = BIC - min(BIC),
+         delta.AIC = AIC - min(AIC),
+         delta.AICc = AICc - min(AICc)) %>%
+  mutate_if(is.numeric, round, digits = 2)
+
+d.pink <- rbind(d.pink.re, d.pink.fx)
+#write.csv(d.pink, "chp1_obj1_pink-mod-table_9-4-23.csv")
+```
+
+# best model form table
+```{r}
+d.chum
+summary(chum.final)
+```
+
+## visualizing chum models
+using this: https://rdrr.io/cran/glmmTMB/man/predict.glmmTMB.html
+```{r}
+# what do we include for month
+ggplot(chum.long) +
+  geom_point(aes(x = Mon, y = abundance, color = Habitat)) # so the greatest catches for chum are in April and June
+# lets use April for now
+table(chum.long$Mon) # 135 seems reasonable
+
+visreg(chum.final)
+summary(chum.final)
+# okay so for predicting random effects models likely you want to predict to the "average" site - so you might not include it in the predict fucntion. 
+# chum.final includes re of siteID, habitat and month
+pr.habc <- predict(chum.final, newdata = data.frame(Habitat = unique(chum.long$Habitat), Mon = "May", SiteID = NA), se.fit = TRUE)
+
+pr.monc <- predict(chum.final, newdata = data.frame(Habitat = "Eelgrass", Mon = unique(chum.long$Mon), SiteID = NA), se.fit = TRUE)
+
+pred <- exp(pr.habc$fit) 
+lwr <- exp(pr.habc$fit - (1.96*pr.habc$se.fit))
+upr <- exp(pr.habc$fit + (1.96*pr.habc$se.fit))
+
+pred.m <- exp(pr.monc$fit)
+lwr.m <- exp(pr.monc$fit - (1.96*pr.monc$se.fit))
+upr.m <- exp(pr.monc$fit + (1.96*pr.monc$se.fit))
+
+chum.long$Habitat <- as.character(chum.long$Habitat)
+
+pr.habc.df <- data.frame(cbind(pred, lwr, upr, unique(chum.long$Habitat))) %>%
+  dplyr::rename(Habitat = V4) %>%
+  mutate(fit = as.numeric(pred),
+         lwr = as.numeric(lwr),
+         upr = as.numeric(upr))
+
+chum.long$Mon <- as.character(chum.long$Mon)
+
+pr.mon.df <- data.frame(cbind(pred.m, lwr.m, upr.m, unique(chum.long$Mon))) %>%
+  dplyr::rename(Mon = V4) %>%
+  mutate(fit = as.numeric(pred.m),
+         lwr = as.numeric(lwr.m),
+         upr = as.numeric(upr.m))
+```
+Now put it together
+```{r}
+chum.long$Mon<- plyr::revalue(chum.long$Mon, c("Apr"="April", "May"="May", "Jun"= "June", "Jul"="July"))
+                           
+
+habc <- ggplot(pr.habc.df) +
+  geom_col(aes(x = Habitat, y = fit), fill = "lightgray") +
+  geom_errorbar(aes(x = Habitat, ymax = fit + upr, ymin = fit - lwr), width = 0.2) +
+  geom_jitter(data = chum.long, aes(x = Habitat, y = abundance)) +
+  #ylim(c(-0.1, 7)) +
+  plot_theme() +
+  #scale_y_continuous(trans = "log10") +
+  labs(y = Juvenile~Chum~Salmon~(no.~seine^-1))
+habc
+
+
+# now doy
+monc <- pr.mon.df %>%
+  mutate(Mon = ifelse(Mon == "Apr", "April", Mon),
+         Mon = ifelse(Mon == "Jun", "June", Mon),
+         Mon = ifelse(Mon == "Jul", "July", Mon)) %>%
+  ggplot() +
+  geom_col(aes(x = Mon, y = fit), fill = "lightgray") +
+  geom_errorbar(aes(x = Mon, ymax = fit + upr, ymin = fit - lwr), width = 0.2) +
+  geom_jitter(data = chum.long, aes(x = Mon, y = abundance)) +
+  scale_x_discrete(limits = c("April", "May", "June", "July")) +
+  #ylim(c(-0.1, 7)) +
+  plot_theme() +
+  #scale_y_continuous(trans="log10") +
+  labs(x = "Month", y = NULL) 
+monc
+
+glmm.chum.plot <- habc + monc + plot_annotation(tag_levels="a")
+
+
+#ggsave("chp1_obj1_glmm.chum.plot.png", plot = glmm.chum.plot, width = 14, height = 8)
+```
+
+# best pink model
+```{r}
+d.pink
+summary(pink.final)
+```
+
+## visualziing pink model
+```{r}
+# what do we include for month
+ggplot(pink.long) +
+  geom_point(aes(x = Mon, y = abundance, color = Habitat)) # so the greatest catches for chum are in April and June
+# lets use April for now
+table(pink.long$Mon) # 135 seems reasonable
+
+visreg(pink.final)
+summary(pink.final)
+# okay so for predicting random effects models likely you want to predict to the "average" site - so you might not include it in the predict fucntion. 
+# chum.final includes re of siteID, habitat and month
+pr.habp <- predict(pink.final, newdata = data.frame(Habitat = unique(pink.long$Habitat), Mon = "May", SiteID = NA), se.fit = TRUE)
+
+pr.monp <- predict(pink.final, newdata = data.frame(Habitat = "Eelgrass", Mon = unique(pink.long$Mon), SiteID = NA), se.fit = TRUE)
+
+pred <- exp(pr.habp$fit) 
+lwr <- exp(pr.habp$fit - (1.96*pr.habp$se.fit))
+upr <- exp(pr.habp$fit + (1.96*pr.habp$se.fit))
+
+pred.m <- exp(pr.monp$fit)
+lwr.m <- exp(pr.monp$fit - (1.96*pr.monp$se.fit))
+upr.m <- exp(pr.monp$fit + (1.96*pr.monp$se.fit))
+
+pink.long$Habitat <- as.character(pink.long$Habitat)
+
+pr.habp.df <- data.frame(cbind(pred, lwr, upr, unique(pink.long$Habitat))) %>%
+  dplyr::rename(Habitat = V4) %>%
+  mutate(fit = as.numeric(pred),
+         lwr = as.numeric(lwr),
+         upr = as.numeric(upr))
+
+pink.long$Mon <- as.character(pink.long$Mon)
+
+pr.monp.df <- data.frame(cbind(pred.m, lwr.m, upr.m, unique(pink.long$Mon))) %>%
+  dplyr::rename(Mon = V4) %>%
+  mutate(fit = as.numeric(pred.m),
+         lwr = as.numeric(lwr.m),
+         upr = as.numeric(upr.m))
+```
+
+```{r}
+pink.long$Mon<- plyr::revalue(pink.long$Mon, c("Apr"="April", "May"="May", "Jun"= "June", "Jul"="July"))
+                           
+
+habp <- ggplot(pr.habp.df) +
+  geom_col(aes(x = Habitat, y = fit), fill = "lightgray") +
+  geom_errorbar(aes(x = Habitat, ymax = fit + upr, ymin = fit - lwr), width = 0.2) +
+  geom_jitter(data = pink.long, aes(x = Habitat, y = abundance)) +
+  #ylim(c(-0.1, 7)) +
+  plot_theme() +
+  #scale_y_continuous(trans = "log10") +
+  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10)) +
+  labs(y = Juvenile~Pink~Salmon~(no.~seine^-1))
+habp
+
+
+# now doy
+monp <- pr.mon.df %>%
+  mutate(Mon = ifelse(Mon == "Apr", "April", Mon),
+         Mon = ifelse(Mon == "Jun", "June", Mon),
+         Mon = ifelse(Mon == "Jul", "July", Mon)) %>%
+  ggplot() +
+  geom_col(aes(x = Mon, y = fit), fill = "lightgray") +
+  geom_errorbar(aes(x = Mon, ymax = fit + upr, ymin = fit - lwr), width = 0.2) +
+  geom_jitter(data = pink.long, aes(x = Mon, y = abundance)) +
+  scale_x_discrete(limits = c("April", "May", "June", "July")) +
+  #ylim(c(0, 8000)) +
+  plot_theme() +
+  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10)) +
+  #ylim(c(0, 10000)) +
+  labs(x = "Month", y = NULL) 
+monp
+
+glmm.pink.plot <- habp + monp + plot_annotation(tag_levels="a")
+
+#ggsave("chp1_obj1_glmm.pink.plot_logscale.png", plot = glmm.pink.plot, width = 14, height = 8)
+```
+
+# best model tables
+```{r}
+library(sjPlot)
+summary(pink.final)
+summary(chum.final)
+tab_model(chum.final, pink.final,
+          transform = NULL,
+          dv.labels = c("Juvenile Chum Salmon", "Juvenile Pink Salmon"),
+          show.est = TRUE, string.est = "Estimate", show.r2 = FALSE,
+          show.stat = TRUE, string.stat = "Statistic",
+          p.threshold = c(0.1, 0.05, 0.01, 0.001),
+          show.se = TRUE, show.ci = FALSE, string.p = "P-Value",
+          string.se = "Standard Error", p.style = "numeric")
+           
+          
+          
+          # pred.labels = c("Intercept", "Habitat [kelp]","Non-linear date", 
+          #                  "Site (random)", "Date"))
+```
+

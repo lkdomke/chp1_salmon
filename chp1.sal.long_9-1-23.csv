@@ -1,0 +1,73 @@
+"","SiteID","EventID","Habitat","Date","Mon","Year","Locale","Location","Lat1","Long1","abundance","doy"
+"1",157,414,"Eelgrass",1999-07-17,"Jul",1999,"Warm Chuck Inlet","Heceta Island",55.7581,-133.4708,0,198
+"2",158,415,"Eelgrass",1999-07-17,"Jul",1999,"Warm Chuck Inlet","Heceta Island",55.7564,-133.4711,0,198
+"3",156,413,"Eelgrass",1999-07-17,"Jul",1999,"Warm Chuck Inlet","Heceta Island",55.7758,-133.5319,0,198
+"4",155,412,"Eelgrass",1999-07-17,"Jul",1999,"Warm Chuck Inlet","Heceta Island",55.7708,-133.5361,0,198
+"5",145,396,"Kelp",1998-05-15,"May",1998,"Klawock Inlet","Prince of Wales Island",55.5072,-133.1339,0,135
+"6",145,397,"Kelp",1998-06-10,"Jun",1998,"Klawock Inlet","Prince of Wales Island",55.5072,-133.1339,5,161
+"7",146,400,"Kelp",1998-06-10,"Jun",1998,"Klawock Inlet","Prince of Wales Island",55.5125,-133.1297,55,161
+"8",146,402,"Kelp",1999-07-15,"Jul",1999,"Klawock Inlet","Prince of Wales Island",55.5125,-133.1297,15,196
+"9",145,403,"Kelp",1999-07-15,"Jul",1999,"Klawock Inlet","Prince of Wales Island",55.5072,-133.1339,9,196
+"10",146,399,"Kelp",1998-05-15,"May",1998,"Klawock Inlet","Prince of Wales Island",55.5125,-133.1297,16,135
+"11",177,254,"Eelgrass",2000-07-14,"Jul",2000,"Shakan Bay","Prince of Wales Island",56.1936,-133.5169,0,196
+"12",178,255,"Eelgrass",2000-07-14,"Jul",2000,"Shakan Bay","Prince of Wales Island",56.195,-133.5167,0,196
+"13",184,375,"Kelp",2000-07-14,"Jul",2000,"Shakan Bay","Prince of Wales Island",56.1483,-133.5378,4,196
+"14",183,374,"Kelp",2000-07-14,"Jul",2000,"Shakan Bay","Prince of Wales Island",56.1453,-133.5408,6,196
+"15",132,237,"Eelgrass",1998-05-12,"May",1998,"Klawock Inlet","Prince of Wales Island",55.5772,-133.0944,24,132
+"16",132,239,"Eelgrass",1998-06-11,"Jun",1998,"Klawock Inlet","Prince of Wales Island",55.5772,-133.0944,0,162
+"17",132,235,"Eelgrass",1998-04-14,"Apr",1998,"Klawock Inlet","Prince of Wales Island",55.5772,-133.0944,21,104
+"18",135,264,"Eelgrass",1999-07-15,"Jul",1999,"Klawock Inlet","Prince of Wales Island",55.5,-133.1644,0,196
+"19",136,259,"Eelgrass",1998-05-14,"May",1998,"Klawock Inlet","Prince of Wales Island",55.5003,-133.1647,1312,134
+"20",136,257,"Eelgrass",1998-04-16,"Apr",1998,"Klawock Inlet","Prince of Wales Island",55.5003,-133.1647,40,106
+"21",136,261,"Eelgrass",1998-06-09,"Jun",1998,"Klawock Inlet","Prince of Wales Island",55.5003,-133.1647,1,160
+"22",135,258,"Eelgrass",1998-05-14,"May",1998,"Klawock Inlet","Prince of Wales Island",55.5,-133.1644,2182,134
+"23",135,256,"Eelgrass",1998-04-16,"Apr",1998,"Klawock Inlet","Prince of Wales Island",55.5,-133.1644,0,106
+"24",135,260,"Eelgrass",1998-06-09,"Jun",1998,"Klawock Inlet","Prince of Wales Island",55.5,-133.1644,1,160
+"25",131,236,"Eelgrass",1998-05-12,"May",1998,"Klawock Inlet","Prince of Wales Island",55.5778,-133.0941,25,132
+"26",131,234,"Eelgrass",1998-04-14,"Apr",1998,"Klawock Inlet","Prince of Wales Island",55.5778,-133.0941,2398,104
+"27",131,238,"Eelgrass",1998-06-11,"Jun",1998,"Klawock Inlet","Prince of Wales Island",55.5778,-133.0941,1,162
+"28",141,358,"Eelgrass",1998-05-13,"May",1998,"Klawock Inlet","Prince of Wales Island",55.5361,-133.1056,9,133
+"29",140,283,"Kelp",1998-04-16,"Apr",1998,"Klawock Inlet","Prince of Wales Island",55.5011,-133.1675,739,106
+"30",141,356,"Eelgrass",1998-04-15,"Apr",1998,"Klawock Inlet","Prince of Wales Island",55.5361,-133.1056,87,105
+"31",140,580,"Kelp",1999-07-15,"Jul",1999,"Klawock Inlet","Prince of Wales Island",55.5011,-133.1675,0,196
+"32",141,360,"Eelgrass",1998-06-12,"Jun",1998,"Klawock Inlet","Prince of Wales Island",55.5361,-133.1056,11,163
+"33",140,285,"Kelp",1998-05-14,"May",1998,"Klawock Inlet","Prince of Wales Island",55.5011,-133.1675,549,134
+"34",140,287,"Kelp",1998-06-09,"Jun",1998,"Klawock Inlet","Prince of Wales Island",55.5011,-133.1675,5,160
+"35",142,361,"Eelgrass",1998-06-12,"Jun",1998,"Klawock Inlet","Prince of Wales Island",55.5358,-133.1053,11,163
+"36",142,365,"Eelgrass",1999-07-15,"Jul",1999,"Klawock Inlet","Prince of Wales Island",55.5358,-133.1053,1,196
+"37",141,364,"Eelgrass",1999-07-15,"Jul",1999,"Klawock Inlet","Prince of Wales Island",55.5361,-133.1056,0,196
+"38",142,357,"Eelgrass",1998-04-15,"Apr",1998,"Klawock Inlet","Prince of Wales Island",55.5358,-133.1053,18,105
+"39",142,359,"Eelgrass",1998-05-13,"May",1998,"Klawock Inlet","Prince of Wales Island",55.5358,-133.1053,4,133
+"40",138,273,"Eelgrass",1998-04-17,"Apr",1998,"Klawock Inlet","Prince of Wales Island",55.4875,-133.1414,1061,107
+"41",138,277,"Eelgrass",1998-06-10,"Jun",1998,"Klawock Inlet","Prince of Wales Island",55.4875,-133.1414,8,161
+"42",138,275,"Eelgrass",1998-05-13,"May",1998,"Klawock Inlet","Prince of Wales Island",55.4875,-133.1414,40,133
+"43",136,265,"Eelgrass",1999-07-15,"Jul",1999,"Klawock Inlet","Prince of Wales Island",55.5003,-133.1647,0,196
+"44",137,274,"Eelgrass",1998-05-13,"May",1998,"Klawock Inlet","Prince of Wales Island",55.4872,-133.1414,11,133
+"45",137,276,"Eelgrass",1998-06-10,"Jun",1998,"Klawock Inlet","Prince of Wales Island",55.4872,-133.1414,7,161
+"46",137,272,"Eelgrass",1998-04-17,"Apr",1998,"Klawock Inlet","Prince of Wales Island",55.4872,-133.1414,2471,107
+"47",139,284,"Kelp",1998-05-14,"May",1998,"Klawock Inlet","Prince of Wales Island",55.5008,-133.1672,79,134
+"48",139,286,"Kelp",1998-06-09,"Jun",1998,"Klawock Inlet","Prince of Wales Island",55.5008,-133.1672,9,160
+"49",139,579,"Kelp",1999-07-15,"Jul",1999,"Klawock Inlet","Prince of Wales Island",55.5008,-133.1672,40,196
+"50",139,282,"Kelp",1998-04-16,"Apr",1998,"Klawock Inlet","Prince of Wales Island",55.5008,-133.1672,5,106
+"51",337,572,"Eelgrass",1998-05-14,"May",1998,"Klawock Inlet","Ballena Island",55.4764,-133.1881,0,134
+"52",338,573,"Eelgrass",1998-05-15,"May",1998,"Klawock Inlet","Prince of Wales Island",55.5208,-133.1617,2,135
+"53",617,3190,"Eelgrass",2007-06-19,"Jun",2007,"Dall Bay","Gravina Island",55.1561,-131.7498,252,170
+"54",616,3189,"Kelp",2007-06-19,"Jun",2007,"Dall Bay","Gravina Island",55.1551,-131.7421,20,170
+"55",598,3171,"Eelgrass",2007-06-14,"Jun",2007,"Nichols Bay","Prince of Wales Island",54.7401,-132.1536,0,165
+"56",599,3172,"Kelp",2007-06-14,"Jun",2007,"Nichols Bay","Prince of Wales Island",54.7259,-132.1241,24,165
+"57",596,3169,"Eelgrass",2007-06-13,"Jun",2007,"Moira Sound","Prince of Wales Island",54.9711,-132.0924,4,164
+"58",602,3175,"Kelp",2007-06-15,"Jun",2007,"Kah Shakes Cove","",55.047,-131.0105,143,166
+"59",603,3176,"Eelgrass",2007-06-15,"Jun",2007,"Kah Shakes Cove","",55.0426,-130.9995,0,166
+"60",601,3174,"Kelp",2007-06-14,"Jun",2007,"Nichols Bay","Prince of Wales Island",54.7051,-132.1005,2,165
+"61",595,3168,"Kelp",2007-06-13,"Jun",2007,"Moira Sound","Prince of Wales Island",54.9856,-132.1098,0,164
+"62",614,3187,"Eelgrass",2007-06-18,"Jun",2007,"Sylburn Harbor","Annette Island",55.1782,-131.5791,0,169
+"63",613,3186,"Kelp",2007-06-18,"Jun",2007,"Sylburn Harbor","Annette Island",55.176,-131.5972,85,169
+"64",606,3179,"Kelp",2007-06-16,"Jun",2007,"Reef Harbor","Duke Island",54.9744,-131.2538,0,167
+"65",605,3178,"Kelp",2007-06-15,"Jun",2007,"Kah Shakes Cove","",55.0635,-130.9917,8,166
+"66",607,3180,"Eelgrass",2007-06-16,"Jun",2007,"Reef Harbor","Duke Island",54.9684,-131.2492,30,167
+"67",107,348,"Eelgrass",1999-07-16,"Jul",1999,"Port San Antonio","Baker Island",55.3658,-133.5856,33,197
+"68",112,343,"Kelp",2000-07-12,"Jul",2000,"Port Conclusion","Baranof Island",56.2553,-134.6633,2,194
+"69",111,342,"Kelp",2000-07-12,"Jul",2000,"Port Conclusion","Baranof Island",56.2536,-134.6653,0,194
+"70",110,351,"Kelp",1999-07-16,"Jul",1999,"Port San Antonio","Baker Island",55.3597,-133.5878,38,197
+"71",109,350,"Kelp",1999-07-16,"Jul",1999,"Port San Antonio","Baker Island",55.3597,-133.5883,15,197
+"72",108,349,"Eelgrass",1999-07-16,"Jul",1999,"Port San Antonio","Baker Island",55.3575,-133.5869,0,197
