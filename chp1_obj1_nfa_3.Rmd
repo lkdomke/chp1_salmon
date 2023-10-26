@@ -20,6 +20,7 @@ library(glmmTMB)
 library(AICcmodavg)
 library(pscl) # vuong test
 library(visreg)
+library(ggsignif) 
 library(patchwork)
 ```
 ```{r theme settings, include=FALSE}
@@ -285,13 +286,18 @@ zero inflated negbin or the hurdle model
 3. Refit ideal random and fixed effect structure with method = 'REML'
 # final models
 ```{r}
-chum.final <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID), 
+chum.final <- glmmTMB(abundance ~  Mon + Habitat+ (1|SiteID), 
                       data = chum.long, REML = T, family = nbinom2(link = "log"))
 summary(chum.final)
+library(emmeans)
+emmeans(chum.final, pairwise ~  Mon, random = ~ 1|SiteID, adjust = "Tukey") 
 
 pink.final <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID),
                       data = pink.long, REML = T, family = nbinom2(link = "log"))
 summary(pink.final)
+
+emmeans(pink.final, pairwise ~  Mon, random = ~ 1|SiteID, adjust = "Tukey") 
+
 ```
 
 
@@ -460,6 +466,7 @@ ggplot(chum.long) +
 table(chum.long$Mon) # 135 seems reasonable
 
 visreg(chum.final)
+visreg(chum.final, scale = "response")
 summary(chum.final)
 # okay so for predicting random effects models likely you want to predict to the "average" site - so you might not include it in the predict fucntion. 
 # chum.final includes re of siteID, habitat and month
@@ -497,35 +504,49 @@ chum.long$Mon<- plyr::revalue(chum.long$Mon, c("Apr"="April", "May"="May", "Jun"
                            
 
 habc <- ggplot(pr.habc.df) +
-  geom_col(aes(x = Habitat, y = fit), fill = "lightgray") +
-  geom_errorbar(aes(x = Habitat, ymax = fit + upr, ymin = fit - lwr), width = 0.2) +
+  geom_col(aes(x = Habitat, y = fit, fill = Habitat)) + #fill = "#7c7c7c") + #fill = "lightgray") +
+  geom_errorbar(aes(x = Habitat, ymax = upr, ymin = lwr), width = 0.2) +
   geom_jitter(data = chum.long, aes(x = Habitat, y = abundance)) +
   #ylim(c(-0.1, 7)) +
   plot_theme() +
   #scale_y_continuous(trans = "log10") +
-  labs(y = Juvenile~Chum~Salmon~(no.~seine^-1))
+  scale_fill_manual(values = c("#339900", "#D16103")) +
+  theme(legend.position="none") +
+  labs(y = Juvenile~Chum~Salmon~(no.~seine^-1)) #+
+  #geom_signif(data = chum.long, aes(x = Habitat, y = abundance), 
+   #                    comparisons = list(c("Eelgrass", "Kelp")),
+    #          map_signif_level=TRUE, textsize = 8, annotations = c("p-value = 0.062"))
 habc
 
-
+summary(chum.final)
 # now doy
 monc <- pr.mon.df %>%
   mutate(Mon = ifelse(Mon == "Apr", "April", Mon),
          Mon = ifelse(Mon == "Jun", "June", Mon),
          Mon = ifelse(Mon == "Jul", "July", Mon)) %>%
   ggplot() +
-  geom_col(aes(x = Mon, y = fit), fill = "lightgray") +
-  geom_errorbar(aes(x = Mon, ymax = fit + upr, ymin = fit - lwr), width = 0.2) +
+  geom_col(aes(x = Mon, y = fit), fill = "#7c7c7c") + #fill = "lightgray") +
+  geom_errorbar(aes(x = Mon, ymax = upr, ymin = lwr), width = 0.2) +
   geom_jitter(data = chum.long, aes(x = Mon, y = abundance)) +
   scale_x_discrete(limits = c("April", "May", "June", "July")) +
   #ylim(c(-0.1, 7)) +
   plot_theme() +
   #scale_y_continuous(trans="log10") +
-  labs(x = "Month", y = NULL) 
+  labs(x = "Month", y = NULL) #+
+  #geom_signif(data = chum.long, aes(x = Mon, y = abundance), 
+   #           comparisons= list(c("April", "May", "June","July")),
+    #          map_signif_level=T, manuel = T)
+
+
+#                       comparisons = list(c("April", "May", "June", "July")),
+ #             map_signif_level=TRUE, textsize = 8)
 monc
+summary(chum.final)
+ glmm.chum.plot <- habc + monc + plot_annotation(tag_levels="a")
 
-glmm.chum.plot <- habc + monc + plot_annotation(tag_levels="a")
-
-
+glmm.chum.plot.talk <- monc + habc
+glmm.chum.plot
+#ggsave("chp1_obj1_glmm.chum.plot_colored.png", plot = glmm.chum.plot.talk, width = 16, height = 7)
 #ggsave("chp1_obj1_glmm.chum.plot.png", plot = glmm.chum.plot, width = 14, height = 8)
 ```
 
@@ -539,11 +560,13 @@ summary(pink.final)
 ```{r}
 # what do we include for month
 ggplot(pink.long) +
-  geom_point(aes(x = Mon, y = abundance, color = Habitat)) # so the greatest catches for chum are in April and June
-# lets use April for now
+  geom_point(aes(x = Mon, y = abundance, color = Habitat)) # so the greatest catches for pink are in April and May
+# lets use May for now
 table(pink.long$Mon) # 135 seems reasonable
+table(pink.long$Mon, pink.long$abundance>0) # more non-zero catches in may compared to any other month... could this be way the CI doesn't go as low? 
 
 visreg(pink.final)
+visreg(pink.final, scale = "response")
 summary(pink.final)
 # okay so for predicting random effects models likely you want to predict to the "average" site - so you might not include it in the predict fucntion. 
 # chum.final includes re of siteID, habitat and month
@@ -551,43 +574,55 @@ pr.habp <- predict(pink.final, newdata = data.frame(Habitat = unique(pink.long$H
 
 pr.monp <- predict(pink.final, newdata = data.frame(Habitat = "Eelgrass", Mon = unique(pink.long$Mon), SiteID = NA), se.fit = TRUE)
 
-pred <- exp(pr.habp$fit) 
-lwr <- exp(pr.habp$fit - (1.96*pr.habp$se.fit))
-upr <- exp(pr.habp$fit + (1.96*pr.habp$se.fit))
+predict(pink.final, newdata = data.frame(Habitat = "Eelgrass", 
+                                         Mon = unique(pink.long$Mon), 
+                                         SiteID = NA), 
+        se.fit = TRUE, type = "response")
 
-pred.m <- exp(pr.monp$fit)
-lwr.m <- exp(pr.monp$fit - (1.96*pr.monp$se.fit))
-upr.m <- exp(pr.monp$fit + (1.96*pr.monp$se.fit))
+# if 
+#log_normal_correct_p<- (sd(residuals(pink.final))^2)/2
+
+
+predp <- exp(pr.habp$fit)
+lwrp <- exp(pr.habp$fit - (1.96*pr.habp$se.fit))
+uprp <- exp(pr.habp$fit + (1.96*pr.habp$se.fit))
+
+predp.m <- exp(pr.monp$fit)
+lwrp.m <- exp(pr.monp$fit - (1.96*pr.monp$se.fit))
+uprp.m <- exp(pr.monp$fit + (1.96*pr.monp$se.fit))
 
 pink.long$Habitat <- as.character(pink.long$Habitat)
 
-pr.habp.df <- data.frame(cbind(pred, lwr, upr, unique(pink.long$Habitat))) %>%
+pr.habp.df <- data.frame(cbind(predp, lwrp, uprp, unique(pink.long$Habitat)))%>%
   dplyr::rename(Habitat = V4) %>%
-  mutate(fit = as.numeric(pred),
-         lwr = as.numeric(lwr),
-         upr = as.numeric(upr))
+  mutate(fit = as.numeric(predp),
+         lwr = as.numeric(lwrp),
+         upr = as.numeric(uprp))
 
 pink.long$Mon <- as.character(pink.long$Mon)
 
-pr.monp.df <- data.frame(cbind(pred.m, lwr.m, upr.m, unique(pink.long$Mon))) %>%
+pr.monp.df <- data.frame(cbind(predp.m, lwrp.m, uprp.m, unique(pink.long$Mon))) %>%
   dplyr::rename(Mon = V4) %>%
-  mutate(fit = as.numeric(pred.m),
-         lwr = as.numeric(lwr.m),
-         upr = as.numeric(upr.m))
+  mutate(fit = as.numeric(predp.m),
+         lwr = as.numeric(lwrp.m),
+         upr = as.numeric(uprp.m))
 ```
 
 ```{r}
-pink.long$Mon<- plyr::revalue(pink.long$Mon, c("Apr"="April", "May"="May", "Jun"= "June", "Jul"="July"))
+pink.long$Mon <- plyr::revalue(pink.long$Mon, c("Apr"="April", "May"="May", "Jun"= "June", "Jul"="July"))
                            
 
 habp <- ggplot(pr.habp.df) +
-  geom_col(aes(x = Habitat, y = fit), fill = "lightgray") +
-  geom_errorbar(aes(x = Habitat, ymax = fit + upr, ymin = fit - lwr), width = 0.2) +
+  geom_col(aes(x = Habitat, y = fit, fill = Habitat)) + #, fill = "lightgray") +
+  geom_errorbar(aes(x = Habitat, ymax = upr, ymin = lwr), width = 0.2) +
   geom_jitter(data = pink.long, aes(x = Habitat, y = abundance)) +
   #ylim(c(-0.1, 7)) +
   plot_theme() +
   #scale_y_continuous(trans = "log10") +
-  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10)) +
+  #scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
+   #                  breaks = c(0, 1, 10, 100, 1000, 2000, 3000, 6000, 9000)) +
+  scale_fill_manual(values = c("#339900", "#D16103")) +
+  theme(legend.position="none") +
   labs(y = Juvenile~Pink~Salmon~(no.~seine^-1))
 habp
 
@@ -598,21 +633,101 @@ monp <- pr.mon.df %>%
          Mon = ifelse(Mon == "Jun", "June", Mon),
          Mon = ifelse(Mon == "Jul", "July", Mon)) %>%
   ggplot() +
-  geom_col(aes(x = Mon, y = fit), fill = "lightgray") +
-  geom_errorbar(aes(x = Mon, ymax = fit + upr, ymin = fit - lwr), width = 0.2) +
+  geom_col(aes(x = Mon, y = fit), fill = "#7c7c7c") + # fill = "lightgray"
+  geom_errorbar(aes(x = Mon, ymax = upr, ymin = lwr), width = 0.2) +
   geom_jitter(data = pink.long, aes(x = Mon, y = abundance)) +
   scale_x_discrete(limits = c("April", "May", "June", "July")) +
   #ylim(c(0, 8000)) +
   plot_theme() +
-  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10)) +
-  #ylim(c(0, 10000)) +
+  #ylim(c(0, 9000)) +
+  #scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
+   #                  breaks= (c(0, 1, 10, 100, 1000, 2000, 3000, 6000, 9000))) +
   labs(x = "Month", y = NULL) 
 monp
 
 glmm.pink.plot <- habp + monp + plot_annotation(tag_levels="a")
+glmm.pink.plot.colored <- monp + habp
 
-#ggsave("chp1_obj1_glmm.pink.plot_logscale.png", plot = glmm.pink.plot, width = 14, height = 8)
+p_ranges_y <- c(ggplot_build(glmm.pink.plot[[1]])$layout$panel_scales_y[[1]]$range$range,
+                ggplot_build(glmm.pink.plot[[2]])$layout$panel_scales_y[[1]]$range$range)
+
+glmm.pink.plot2 <- glmm.pink.plot &
+  ylim(min(p_ranges_y), max(p_ranges_y)) &
+  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
+                     breaks= (c(0, 1, 10, 100, 1000, 2000, 3000, 6000, 9000))) 
+
+
+p_ranges_y2 <- c(ggplot_build(glmm.pink.plot.colored[[1]])$layout$panel_scales_y[[1]]$range$range,
+                ggplot_build(glmm.pink.plot.colored[[2]])$layout$panel_scales_y[[1]]$range$range)
+
+glmm.pink.plot.colored2 <- glmm.pink.plot.colored &
+  ylim(min(p_ranges_y2), max(p_ranges_y2)) &
+  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
+                     breaks= (c(0, 1, 10, 100, 1000, 2000, 3000, 6000, 9000))) 
+
+#ggsave("chp1_obj1_glmm.pink.plt_logscale.colored.png", plot = glmm.pink.plot.colored2, width = 16, height = 7)
+
+#ggsave("chp1_obj1_glmm.pink.plot_logscale.png", plot = glmm.pink.plot2, width = 14, height = 8)
 ```
+
+Non-exponentiated CI of the predicted pink.final
+```{r}
+pr.habp <- predict(pink.final, newdata = data.frame(Habitat = unique(pink.long$Habitat), Mon = "May", SiteID = NA), se.fit = TRUE)
+
+pr.monp <- predict(pink.final, newdata = data.frame(Habitat = "Eelgrass", Mon = unique(pink.long$Mon), SiteID = NA), se.fit = TRUE)
+
+predp <- pr.habp$fit
+lwrp <- pr.habp$fit - (1.96*pr.habp$se.fit)
+uprp <- pr.habp$fit + (1.96*pr.habp$se.fit)
+
+predp.m <- pr.monp$fit
+lwrp.m <- pr.monp$fit - (1.96*pr.monp$se.fit)
+uprp.m <- pr.monp$fit + (1.96*pr.monp$se.fit)
+
+pink.long$Habitat <- as.character(pink.long$Habitat)
+
+pr.habp.df <- data.frame(cbind(predp, lwrp, uprp, unique(pink.long$Habitat)))%>%
+  dplyr::rename(Habitat = V4) %>%
+  mutate(fit = as.numeric(predp),
+         lwr = as.numeric(lwrp),
+         upr = as.numeric(uprp))
+
+pink.long$Mon <- as.character(pink.long$Mon)
+
+pr.monp.df <- data.frame(cbind(predp.m, lwrp.m, uprp.m, unique(pink.long$Mon))) %>%
+  dplyr::rename(Mon = V4) %>%
+  mutate(fit = as.numeric(predp.m),
+         lwr = as.numeric(lwrp.m),
+         upr = as.numeric(uprp.m))
+
+ggplot(pr.habp.df) +
+  geom_col(data = pr.habp.df, aes(x = Habitat, y = fit, fill = Habitat)) + #fill = "lightgray") +
+  geom_errorbar(aes(x = Habitat, ymax = upr, ymin = lwr), width = 0.2, data = pr.habp.df) #+
+  #geom_jitter(data = pink.long, aes(x = Habitat, y = log(abundance+1))) +
+  #ylim(c(-0.1, 7)) +
+  plot_theme() +
+  #scale_y_continuous(trans = "log10") +
+  #scale_y_continuous(trans=scales::pseudo_log_trans(base = 10)) +
+  #scale_fill_manual(values = c("#339900", "#D16103")) +
+  theme(legend.position="none") +
+  labs(y = Juvenile~Pink~Salmon~(no.~seine^-1))
+
+pr.mon.df %>%
+  mutate(Mon = ifelse(Mon == "Apr", "April", Mon),
+         Mon = ifelse(Mon == "Jun", "June", Mon),
+         Mon = ifelse(Mon == "Jul", "July", Mon)) %>%
+  ggplot() +
+  geom_col(aes(x = Mon, y = fit), fill = "#7c7c7c") +
+  geom_errorbar(aes(x = Mon, ymax = fit + upr, ymin = fit - lwr), width = 0.2) +
+  #geom_jitter(data = pink.long, aes(x = Mon, y = abundance)) +
+  scale_x_discrete(limits = c("April", "May", "June", "July")) +
+  #ylim(c(0, 8000)) +
+  plot_theme() +
+  #scale_y_continuous(trans=scales::pseudo_log_trans(base = 10)) +
+  #ylim(c(0, 10000)) +
+  labs(x = "Month", y = NULL) 
+```
+
 
 # best model tables
 ```{r}

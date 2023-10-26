@@ -104,6 +104,8 @@ sal.wide.sp <- seso_fish_sub %>%
 
 sal.long.sp <- sal.wide.sp %>%
   pivot_longer(cols = c("SALSOCK", "SALPINK", "SALCOHO", "SALCHUM"), names_to = "SpCode", values_to = "abundance")
+
+#write.csv(sal.long.sp, "chp1.sal.long.sp_9-1-23.csv")
 ```
 
 Have to also create sal.long that DON'T INCLUDE species specific numbers so that we can model them all together
@@ -113,6 +115,8 @@ sal.long <- sal.wide.sp %>%
   dplyr::select(!(contains("SAL"))) %>% # drop the sal cols 
   mutate(Date = mdy(Date),
          doy = yday(Date))
+
+#write.csv(sal.long, "chp1.sal.long_9-1-23.csv")
 
 ```
 
@@ -375,6 +379,7 @@ summary(gamm1.2$lme)
 # this google conversation (answered by simon wood) - states that nb() defaults to REML for smoothing parameter estimation and negbin() defaultrs to UBRE unless method = "REML" is specified. 
 # this link also seems to indicate that negbin is treating theta was FIXED. 
 
+# just a ntoe this form of random effect is random intercept (s(SiteID, bs = "re"))
 gam0.5 <- gam(abundance ~ s(SiteID, bs = "re"), family = "nb", data = sal.long, method = "ML")
 summary(gam0.5)
 variance_comp(gam0.5)
