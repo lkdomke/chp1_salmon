@@ -32,16 +32,21 @@ str(eelgrass)
 eel <- eelgrass %>%
   mutate(shoot_dw = shoot_foil_dw-shoot_foil)  # calculate dry weight
 # determin max leaf length
+#eel <- eel[c(1:10),]
 eel2 <- eel %>% 
-  rowwise() %>%
-  mutate(max_length = max(leaf_length1, leaf_length2, leaf_length3, leaf_length4, 
-                          leaf_length5, leaf_length6, leaf_length7, leaf_length8, 
-                          leaf_length9, leaf_length10, na.rm=TRUE)) %>%
-  mutate(mean_length = mean(leaf_length1, leaf_length2, leaf_length3, leaf_length4, 
+  ungroup() %>%
+  dplyr::rowwise() %>%
+  #dplyr::group_by(site, quadrat, plant) %>%
+  dplyr::mutate(mean_length = mean(c(leaf_length1, leaf_length2, leaf_length3, leaf_length4, 
                             leaf_length5, leaf_length6, leaf_length7, leaf_length8, 
-                            leaf_length9, leaf_length10, na.rm=TRUE))
+                            leaf_length9, leaf_length10), na.rm=TRUE)) %>%
+  dplyr::mutate(max_length = max(c(leaf_length1, leaf_length2, leaf_length3, leaf_length4,
+                   leaf_length5, leaf_length6, leaf_length7, leaf_length8, leaf_length9, leaf_length10), na.rm=TRUE)) #%>%
+ #dplyr::select(c(leaf_length1, leaf_length2, leaf_length3, leaf_length4,
+  #                 leaf_length5, leaf_length6, leaf_length7, leaf_length8, leaf_length9, leaf_length10, max_length, mean_length))
 str(eel2)
-
+# there are a few error/warning messages because on lines 293 - 295 there are no plants
+# continues to L663, L680, L704, L705
 # subset only the data that was collected before July (the main part of the growing season)
 eel_beforeJuly <- eel2 %>%
   filter(YYYYMMDD < 20170701) # before July
@@ -322,10 +327,28 @@ newx <- data.frame(max_length = as.numeric(lng_sub$length_cm))
 # make sure to exp() the values because its a log-log relationship
 pr.lm <- exp(predict(lm2, newdata = newx, interval = "confidence", level = 0.95))
 
+pr.exp <- data.frame(predict(lm2, newdata = newx, interval = "confidence", level = 0.95))
+
+
+# okay because we had to log-transform the data in order to make it fit 
+# normality it requires a log-normal transformation which is equal to the 
+# squared(standard deviation of the residuals)/2, so variance/2
+correction <- (sd(lm2$residuals)^2)/2
+corr.fit <- exp((pr.exp$fit + correction)) # you add it to the fitted LOG SPACE and then exponentiate it
+corr.lwr <- exp(pr.exp$lwr + correction) # also needs to be done to the confidence intervals
+corr.upr <- exp(pr.exp$upr + correction)
+
 # graph these new predicted values
 # create data.frame first
 newdata <- cbind(lng_sub, pr.lm)
-ggplot(newdata, aes(x = length_cm, y = fit)) + geom_point() + theme_classic() + geom_smooth(method = "lm")
+newdata.corr <- cbind(lng_sub, corr.fit) %>%
+  cbind(corr.lwr) %>%
+  cbind(corr.upr)
+ggplot() + 
+  geom_point(data = newdata, aes(x = length_cm, y = fit), color = "green") + 
+  theme_classic() + 
+  geom_point(data = newdata.corr, aes(x = length_cm, y = corr.fit))
+  geom_smooth(method = "lm", data = newdata, aes(x = )) # isn't plotting the lm
 
 
 ```
@@ -351,9 +374,16 @@ dsty <- dplyr::select(dsty, quadrat_ID, site, date, YYYYMMDD,
 
 # calculate average biomass for 15 shoots for each quadrat
 require(dplyr)
-df <- newdata %>%
+#df <- newdata %>%
+#  group_by(quadrat_ID) %>%
+#  mutate(avg_biomass = mean(fit))
+#df1 <- df %>%
+#  dplyr::select(quadrat_ID, avg_biomass) %>%
+#  distinct()
+
+df <- newdata.corr %>%
   group_by(quadrat_ID) %>%
-  mutate(avg_biomass = mean(fit))
+  mutate(avg_biomass = mean(corr.fit))
 df1 <- df %>%
   dplyr::select(quadrat_ID, avg_biomass) %>%
   distinct()
@@ -362,7 +392,7 @@ df1 <- df %>%
 
 df2 <- left_join(df1, dsty, by = "quadrat_ID")
 df3 <- left_join(df2, hab_qrt[,c("quadrat_ID","site")], by = "quadrat_ID") # want quadratID:site
-#write.csv(df3, "../APECS Master repository/APECS Master repo/ALL_DATA/seagrass_biomass_conversions_baycodes.csv") 
+#write.csv(df3, "../APECS Master repository/APECS Master repo/ALL_DATA/seagrass_biomass_conversions_baycodes_correction_11-17-23.csv") 
 ```
 
 ### Before July
@@ -381,14 +411,53 @@ newx22_lm4 <- data.frame(max_length = as.numeric(eel.lngs22$length_cm))
 pr.lm4 <- exp(predict(lm4, newdata = newx_lm4, interval = "confidence", level = 0.95))
 pr.lm4.21 <- exp(predict(lm4, newdata = newx21_lm4, interval = "confidence", level = 0.95))
 pr.lm4.22 <- exp(predict(lm4, newdata = newx22_lm4, interval = "confidence", level = 0.95))
+
+# again need to correct for the back transformation to median instead of mean
+ex.pr.lm4 <- data.frame(predict(lm4, newdata = newx_lm4, interval = "confidence", level = 0.95))
+ex.pr.lm4.21 <- data.frame(predict(lm4, newdata = newx21_lm4, interval = "confidence", level = 0.95))
+ex.pr.lm4.22 <- data.frame(predict(lm4, newdata = newx22_lm4, interval = "confidence", level = 0.95))
+# okay because we had to log-transform the data in order to make it fit 
+# normality it requires a log-normal transformation which is equal to the 
+# squared(standard deviation of the residuals)/2, so variance/2
+correction2 <- (sd(lm4$residuals)^2)/2
+corr.fit <- exp((ex.pr.lm4$fit + correction2)) # you add it to the fitted LOG SPACE and then exp it
+corr.lwr <- exp((ex.pr.lm4$lwr + correction2)) # also needs to be done to the confidence intervals
+corr.upr <- exp((ex.pr.lm4$upr + correction2))
+corr <-cbind(corr.fit, corr.lwr) %>%
+  cbind(corr.upr)
+
+correction2 <- (sd(lm4$residuals)^2)/2
+corr.fit21 <- exp((ex.pr.lm4.21$fit + correction2)) # you add it to the fitted LOG SPACE and then exp it
+corr.lwr21 <- exp((ex.pr.lm4.21$lwr + correction2)) # also needs to be done to the confidence intervals
+corr.upr21 <- exp((ex.pr.lm4.21$upr + correction2))
+corr21 <-cbind(corr.fit21, corr.lwr21) %>%
+  cbind(corr.upr21)
+
+corr.fit22 <- exp((ex.pr.lm4.22$fit + correction2)) # you add it to the fitted LOG SPACE and then exp it
+corr.lwr22 <- exp((ex.pr.lm4.22$lwr + correction2)) # also needs to be done to the confidence intervals
+corr.upr22 <- exp((ex.pr.lm4.22$upr + correction2))
+corr22 <- cbind(corr.fit22, corr.lwr22) %>%
+  cbind(corr.upr22)
+
 # graph these new predicted values
 # create data.frame first
-newdata_lm4 <- cbind(lng_sub, pr.lm4)
-ggplot(newdata_lm4, aes(x = log(length_cm), y = fit)) + geom_point() + theme_classic() + geom_smooth(method = "lm")
+newdata_lm4.corr <- cbind(lng_sub, corr) %>%
+  dplyr::rename(lwr = corr.lwr,
+         upr = corr.upr,
+         fit = corr.fit)
+#newdata_lm4 <- cbind(lng_sub, pr.lm4)
+ggplot(newdata_lm4.corr, aes(x = log(length_cm), y = fit)) + geom_point() + theme_classic() + geom_smooth(method = "lm")
 
-newdata_lm422 <- cbind(eel.lngs22, pr.lm4.22)
+# these are the NEW (10/23) CORRECTED VALUES
+newdata_lm422 <- cbind(eel.lngs22, corr22) %>%
+  dplyr::rename(lwr = corr.lwr22,
+         upr = corr.upr22,
+         fit = corr.fit22)
 
-newdata_lm421 <- cbind(eel.lng21, pr.lm4.21)
+newdata_lm421 <- cbind(eel.lng21, corr21) %>%
+  dplyr::rename(lwr = corr.lwr21,
+         upr = corr.upr21,
+         fit = corr.fit21)
 # because this gives the lng + CI of the individual blades for eelgrass, we're going to rbind it with the rest of the lngths and then read it out
 lng22.red <- lng22 %>%
   anti_join(newdata_lm422) %>%
@@ -407,13 +476,15 @@ lng21.red <- lng21 %>%
 lng22.biomass <- rbind(lng22.red, newdata_lm422)
 lng21.biomass <- rbind(lng21.red, newdata_lm421)
 
-#write.csv(lng21.biomass, "Data/hab_length_2021_Zosbiomass_3-14-23.csv")
-#write.csv(lng22.biomass, "Data/hab_length_2022_Zosbiomass_3-14-23.csv")
+# this is just for 2021 and 2022 (see below for writing out 2019)
+#write.csv(lng21.biomass, "Data/hab_length_2021_Zosbiomass_10-18-23.csv")
+#write.csv(lng22.biomass, "Data/hab_length_2022_Zosbiomass_10-18-23.csv")
 ```
 
 
 #### Estimate total biomass (lm2)
 ```{r}
+str(newdata_lm4.corr)
 str(newdata_lm4)
 str(hab_qrt)
 hab_qrt$density <- as.numeric(hab_qrt$density)
@@ -429,10 +500,10 @@ dsty <- hab_qrt %>%
 
 # calculate average biomass for 15 shoots for each quadrat
 require(dplyr)
-df_lm4 <- newdata_lm4 %>%
-  group_by(quadrat_ID) %>%
-  mutate(avg_biomass = mean(fit))
-df1_lm4 <- df_lm4 %>%
+df_lm4.corr <- newdata_lm4.corr %>%
+  dplyr::group_by(quadrat_ID) %>%
+  dplyr::mutate(avg_biomass = mean(fit))
+df1_lm4 <- df_lm4.corr %>%
   dplyr::select(quadrat_ID, avg_biomass) %>%
   distinct()
 
@@ -440,9 +511,9 @@ df1_lm4 <- df_lm4 %>%
 
 df2_lm4 <- left_join(df1_lm4, dsty, by = "quadrat_ID")
 df3_lm4 <- left_join(df2_lm4, hab_qrt[,c("quadrat_ID", "site")], by = "quadrat_ID")
-#write.csv(df3_lm4, "../ALL_DATA/seagrass_biomass_conversions.csv") 
+#write.csv(df3_lm4, "../APECS Master repository/APECS Master repo/ALL_DATA/seagrass_biomass_conversions_corrected_10-20-23.csv")
 
-range(df3_lm4$avg_biomass) # 0.00179 - 0.004, 0.02 - 0.5
+range(df3_lm4$avg_biomass) # 0.00179 - 0.004, 0.02 - 0.5 CORRECTED 0.027-0.559
 ```
 
 # Look at variation in biomass between years by site

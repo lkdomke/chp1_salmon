@@ -116,26 +116,45 @@ newx22 <- data.frame(length_mm = as.numeric(lng22.phyll$length_mm))
 
 # use the log-log linear model (equation above) to calculate the dry mass of the shoot with 95% CI 
 # make sure to exp() the values because its a log-log relationship
-pr.lm <- exp(predict(fit.lmlog, newdata = newx, interval = "confidence", level = 0.95))
-range(data.frame(pr.lm)$fit)
-pr.lm22 <- exp(predict(fit.lmlog, newdata = newx22, interval = "confidence", level = 0.95))
+pr.lm <- data.frame(predict(fit.lmlog, newdata = newx, interval = "confidence", level = 0.95))
+
+# okay because we had to log-transform the data in order to make it fit 
+# normality it requires a log-normal transformation which is equal to the 
+# squared(standard deviation of the residuals)/2, so variance/2
+correction <- (sd(fit.lmlog$residuals)^2)/2 # this is the correction factor
+corr.fit <- exp(pr.lm$fit + correction) # you add it to the fitted LOG SPACE and then exponentiate it
+corr.lwr <- exp(pr.lm$lwr + correction) # also needs to be done to the confidence intervals
+corr.upr <- exp(pr.lm$upr + correction)
+
+hist(corr.fit)
+hist(exp(pr.lm$fit))
+range(corr.fit) 
+range(indiv$weight_g)
+
+pr.lm22 <- data.frame(predict(fit.lmlog, newdata = newx22, interval = "confidence", level = 0.95))
+corr.fit22 <- exp(pr.lm22$fit + correction)
+corr.lwr22 <- exp(pr.lm22$lwr + correction)
+corr.upr22 <- exp(pr.lm22$upr + correction)
+
 
 # graph these new predicted values
 # create data.frame first
-newdata <- cbind(phyll.lng, pr.lm)
-ggplot() + geom_point(data = newdata, aes(x = length_mm, y = fit), color = "green") + 
+newdata <- cbind(phyll.lng, corr.fit)
+ggplot() + geom_point(data = newdata, aes(x = length_mm, y = corr.fit), color = "green") + 
   theme_classic() + 
   geom_point(data = indiv, aes(x = length_mm, y = weight_g), color = "blue") +
   geom_smooth(method = "lm")
 
 newdata22 <- lng22.phyll %>%
   dplyr::select(-c(fit, lwr, upr, X, X.1)) %>%
-  cbind(pr.lm22)
+  cbind(corr.fit22) %>%
+  cbind(corr.lwr22) %>%
+  cbind(corr.upr22)
   
 ggplot() + 
-  geom_ribbon(data = newdata22, aes(x = length_mm, ymin = lwr, ymax = upr), fill = "gray") +
+  geom_ribbon(data = newdata22, aes(x = length_mm, ymin = corr.lwr22, ymax = corr.upr22), fill = "gray")+
   geom_point(data = indiv, aes(x = length_mm, y = weight_g), color = "blue") +
-  geom_point(data = newdata22, aes(x = length_mm, y = fit))
+  geom_point(data = newdata22, aes(x = length_mm, y = corr.fit22))
   
 ```
 
@@ -150,13 +169,13 @@ lng %>%
   filter(grepl("Phyllospadix", species)) # all habs including measured and unmeasured, 188 observations
 
 # what is the range of values for weight - does it make sense?
-range(newdata$fit)
+range(newdata$corr.fit)
 range(indiv$weight_g) # yea more or less they match, lets make the new data the weight data now. 
 
 head(newdata)
 phyll.weight <-newdata %>%
-  mutate(weight_g = fit) %>%
-  dplyr::select(-c(fit, lwr, upr)) # 57 observations now weight
+  mutate(weight_g = corr.fit) %>%
+  dplyr::select(-c(corr.fit)) # 57 observations now weight
 
 lng.measured <- lng %>%
   anti_join(phyll.weight, by = c("plant_ID")) %>% # lng was 2123; removed the unmeasured phyll = 2066
@@ -172,8 +191,11 @@ lng.measured %>%
 lng22 %>%
   filter(grepl("Phyllospadix", species))
 
-range(newdata22$fit)
+range(newdata22$corr.fit22)
 range(indiv$weight_g)
+
+newdata22 <- newdata22 %>%
+  dplyr::rename(fit = corr.fit22, lwr = corr.lwr22, upr = corr.upr22)
 
 lng22.red <- lng22 %>%
   anti_join(newdata22, by = c("plant_ID", "quadrat_ID", "species", "length_mm", 
@@ -184,6 +206,6 @@ lng22.phyll.weight <- rbind(lng22.red, newdata22)
 
 
 # we want to keep the upr an dlwr for the mean weight based on length 
-#write.csv(lng22.phyll.weight, "../APECS_DM/Data/Habitat_data/hab_length_2022_clean_biomass_3-14-23.csv")
-#write.csv(lng.measured, "../APECS_DM/Data/Habitat_data/hab_length_2021_measuredphyllo_3-9-23.csv")
+#write.csv(lng22.phyll.weight, "../APECS_DM/Data/Habitat_data/hab_length_2022_clean_biomass_10-9-23.csv")
+#write.csv(lng.measured, "../APECS_DM/Data/Habitat_data/hab_length_2021_measuredphyllo_10-9-23.csv")
 ```
