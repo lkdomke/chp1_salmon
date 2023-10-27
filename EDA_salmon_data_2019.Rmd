@@ -31,8 +31,11 @@ dat <- read.csv("Data/FISH604_combined_10-5-19.csv", stringsAsFactors = FALSE, h
 
 allsites <- read_xls("../APECS Master repository/APECS Master repo/ALL_DATA/Lia_fish/dist2_anad_allsites_102319.xls", sheet = 1) # not on KNB
 
-biom <- read.csv("../APECS Master repository/APECS Master repo/ALL_DATA/seagrass_biomass_conversions.csv",
-                 stringsAsFactors = FALSE, header = TRUE) # not on KNB
+#biom <- read.csv("../APECS Master repository/APECS Master repo/ALL_DATA/seagrass_biomass_conversions.csv",
+ #                stringsAsFactors = FALSE, header = TRUE) # not on KNB
+
+biom <- read.csv("../APECS Master repository/APECS Master repo/ALL_DATA/seagrass_biomass_conversions_corrected_10-20-23.csv")
+
 
 eel17 <- read.csv(url("https://knb.ecoinformatics.org/knb/d1/mn/v2/object/urn%3Auuid%3Ac79aa46e-5e20-4559-86e5-64166af2cf94", method = "libcurl"),stringsAsFactors = FALSE, header = TRUE)
 
@@ -120,15 +123,25 @@ biom_site <- biom %>%
   mutate(total_biomass_gm2 = (flowering_biomass_gm2 + shoot_biomass_gm2)) %>%
   group_by(site) %>%
   dplyr::summarise(avg_biom_site_gm2 = mean(total_biomass_gm2)) %>%
-  mutate(year = "2019")
-
+  mutate(year = "2019") %>%
+  mutate(site = ifelse(site == "Goat Mouth Inlet", "Goats mouth inlet", site),
+         site = ifelse(site == "Naukati", "Naukati Bay", site),
+         site = ifelse(site == "Kaguk ", "Kaguk Cove", site),
+         site = ifelse(site == "Guktu", "Guktu Bay", site),
+         site = ifelse(site == "South Wadleigh", "South Wadleigh Island", site),
+         site = ifelse(site == "Chusini-Kladein Flat", "Chusini Cove", site), 
+         site = ifelse(site == "North Fish Egg", "North Fish Egg Island", site),
+         site = ifelse(site == "South Fish Egg", "South Fish Egg Island", site),
+         site = ifelse(site == "Natzuhini", "Natzuhini Bay", site),
+         site = ifelse(site == "Farallon", "Farallon Bay", site)) #%>%
+unique(biom_site$site)
 # 2017
 str(eel17)
-
+# note at every site there are 8 quadrats and 5 plants removed for weight and epiphyte; however, not every quadrat had 5 plants. So account for that when calculating
 biom17 <- eel17 %>%
   mutate(shoot_dw = shoot_foil_dw - shoot_foil, na.rm = T) %>%
   group_by(site, quadrat) %>%
-  dplyr::summarise(avg_shoot_dw = mean(shoot_dw))
+  dplyr::summarise(avg_shoot_dw = mean(shoot_dw, na.rm = T)) # need na.rm here otherwise we get wrong NAs
 
 
 eel_hab17 <- env17 %>%
@@ -164,9 +177,13 @@ df3 <- df2 %>%
 biom_all <- rbind(df3, biom_site)
 biom_all$year <- as.factor(biom_all$year)
 
-dat4 <- left_join(dat3, biom_all, by = c("site", "year"))
+unique(dat3$site)
+unique(biom_all$site)
 
-#write.csv(dat4, "Data/salmon_env_1719.csv")
+dat4 <- left_join(dat3, biom_all, by = c("site", "year"))
+is.na(dat4$avg_biom_site_gm2) # if any of the biomass should up as TRUE or NA thats is not correct
+
+#write.csv(dat4, "Data/salmon_env_1719_10-20-23.csv")
 ```
 
 ## Qualitative sediment
@@ -301,7 +318,7 @@ dat6 <- dat5 %>%
   dplyr::select(-c(site.x, place_name.y, site.y, place_name.x, site.y, YYYYMMDD)) %>%
   dplyr::select(site, site_ID, YYYYMMDD_sed, year, n_surv1:avg_biom_site_gm2, habitat:longitude, trans_type, sed1_avg:sed2_sd) 
 
-#write.csv(dat6, "Data/sal+env+sed_4.13.21.csv")
+#write.csv(dat6, "Data/sal+env+sed_10.20.23.csv")
 ```
 
 
