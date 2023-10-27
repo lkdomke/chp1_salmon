@@ -34,8 +34,9 @@ Salmon biomass will increase with eelgrass complexity, salinity and sea otter de
 
 
 ```{r data include=FALSE}
-dat4 <- read.csv("Data/salmon_env_1719.csv", stringsAsFactors=FALSE, header = TRUE)
-dat6 <- read.csv("Data/sal+env+sed_4.13.21.csv", stringsAsFactors = FALSE, header = TRUE) # Salmon w/ sed info
+#both these datasets have the corrected eelgrass biomass to mean not median
+dat4 <- read.csv("Data/salmon_env_1719_10-20-23.csv", stringsAsFactors=FALSE, header = TRUE)
+dat6 <- read.csv("Data/sal+env+sed_10.20.23.csv", stringsAsFactors = FALSE, header = TRUE) # Salmon w/ sed info
 ```
 
 
@@ -81,7 +82,8 @@ add_global_label <- function(pwobj, Xlab = NULL, Ylab = NULL, Xgap = 0.03, Ygap 
     ylabgrob <- patchwork::plot_spacer()
     if (!is.null(Ylab)) {
         ylabgrob <- ggplot() +
-            geom_text(aes(x = .5, y = .5), label = Ylab, angle = 90, ...) +
+            geom_text(aes(x = .5, y = .5), label = Ylab, parse = T,
+                      angle = 90, ...) +
             theme_void()
     }
     if (!is.null(Xlab)) {
@@ -1343,8 +1345,8 @@ Interesting looks like theres a slightly negative relationship between sed1/sed2
 
 # included an interaction between year and date and potentially eelgrass biomass and then also with sediment.. 
 pink.intx <- glm.nb(SALPINK ~ year * sed1_avg * avg_biom_site_gm2 * juli_date + 
-                      I(juli_date^2)+ avg_density + dist_anad_km, data = fish,
-                    control=glm.control(maxit = 100), init.theta = 0.495)
+                      I(juli_date^2)+ avg_density + dist_anad_km, data = fish, 
+                    control=glm.control(maxit = 100), init.theta = 0.552)
 
 summary(pink.intx)
 
@@ -1420,8 +1422,10 @@ summary(pink.mod3.red)
 anova(pink.mod2.red, pink.mod3.red) # sed2 does not sig contribute to the model
 ##############
 
-AICc(pink.intx);AICc(pink.full.mod);AICc(pink.mod1);AICc(pink.mod2);AICc(pink.mod2.2); AICc(pink.mod3)
-AICc(pink.intx.red);AICc(pink.full.mod.red);AICc(pink.mod1.red);AICc(pink.mod2.red);AICc(pink.mod3.red)
+#AICc(pink.intx);
+AICc(pink.full.mod);AICc(pink.mod1);AICc(pink.mod2);AICc(pink.mod2.2); AICc(pink.mod3)
+#AICc(pink.intx.red);
+AICc(pink.full.mod.red);AICc(pink.mod1.red);AICc(pink.mod2.red);AICc(pink.mod3.red)
 
 ```
 
@@ -1522,7 +1526,7 @@ pink1
 
 pink2 <- visreg(pink.mod2, "avg_density", 
                 scale = "response", gg = TRUE, rug = F, line.par = list(col = "black")) +
-  xlab(expression(paste("Sea otter density (#/",km^2,")"))) + 
+  xlab(expression(paste("Sea otter density (no. ",km^-2,")"))) + 
   ylab(NULL) +
   coord_cartesian(ylim = c(0,300)) +
     geom_point(data = fish, aes(x = avg_density, y = SALPINK)) + 
@@ -1531,9 +1535,9 @@ pink2
 
 pink3 <- visreg(pink.mod2, "avg_biom_site_gm2", 
                 scale = "response", gg = TRUE, rug = F, line.par = list(col = "black")) +
-  xlab(expression(paste("Average eelgrass biomass (g/",m^2,")"))) + 
+  xlab(expression(paste("Average eelgrass biomass (g",m^-2,")"))) + 
   ylab(NULL) + coord_cartesian(ylim = c(0,300)) +
-    geom_point(data = fish, aes(x = avg_density, y = SALPINK)) + 
+    geom_point(data = fish, aes(x = avg_biom_site_gm2, y = SALPINK)) + 
   plot_theme()
 pink3
 
@@ -1541,19 +1545,24 @@ pink4 <- visreg(pink.mod2, "dist_anad_km",
                 scale = "response", gg = TRUE, rug = F, line.par = list(col = "black")) +
   xlab(expression(paste("Distance from anadromous stream (km)"))) + 
   ylab(NULL) + coord_cartesian(ylim = c(0,300)) +
-    geom_point(data = fish, aes(x = avg_density, y = SALPINK)) + 
+    geom_point(data = fish, aes(x = dist_anad_km, y = SALPINK)) + 
   plot_theme()
 pink4
 
+library(patchwork)
 pinks <- (pink1 + pink2) /
   (pink3 + pink4) + plot_annotation(tag_levels = "a")
 
-pink.plot <- add_global_label(pinks, Ylab = "Pink Salmon (#/seine)",
+
+pink.plot <- add_global_label(pinks, 
+                              Ylab = "Pink~Salmon~'('*no.~seine^-1*')'",
                  size = 8.25)
 pink.plot
 summary(pink.mod2)
 
+library(sjPlot)
 tab_model(pink.mod2, transform = NULL)
+#ggsave("chp1_obj2_pink_plot.png", plot = pink.plot, width = 14, height = 10)
 ```
 
 
@@ -1620,7 +1629,7 @@ AICc(chum.full.mod);AICc(chum.intx) # yea.
 
 chum.mod2 <- glm.nb(SALCHUM ~ sed1_avg + avg_biom_site_gm2 + juli_date + 
                       I(juli_date^2) + avg_density + dist_anad_km, data = fish,
-                    control=glm.control(maxit = 100), init.theta = 0.495)
+                    control=glm.control(maxit = 1000), init.theta = 0.495)
 
 summary(chum.mod2)
 
@@ -1729,6 +1738,7 @@ summary(chum.mod5)
 ### Visualize chum
 Use chum.mod5
 ```{r}
+summary(chum.mod5)
 visreg(chum.mod5, scale = "response")
 chum.mod.rev <- glm.nb(SALCHUM ~ avg_density + juli_date + I(juli_date^2), data = fish, 
                     control = glm.control(maxit = 100), init.theta = 0.495)
@@ -1772,7 +1782,7 @@ ggplot() +
 # instead plot with visreg so you can plot diff y values   
 chum_dens <- visreg(chum.mod5, "avg_density", 
        scale = "response", gg = TRUE, rug = F, partial = F) + 
-  xlab(expression(paste("Sea otter density (#/",km^2,")"))) + 
+  xlab(expression(paste("Sea otter density (no. ",km^2,")"))) + 
   ylab(NULL) + coord_cartesian(ylim = c(0,200)) +
     geom_point(data = fish, aes(x = avg_density, y = SALCHUM))
 chum_dens
@@ -1793,20 +1803,21 @@ plot_grid(chum_jd, chum_jd_pred)
 chum1 <- visreg(chum.mod5, "juli_date", 
        scale = "response", gg = TRUE, rug = F, partial = F,line.par = list(col = 'black')) + 
   xlab(expression(paste("Day of year"))) + 
-  ylab("Chum Salmon (#/seine)") + coord_cartesian(ylim = c(0,300)) +
+  ylab(Chum~Salmon~(no.~seine^-1)) + coord_cartesian(ylim = c(0,300)) +
     geom_point(data = fish, aes(x = juli_date, y = SALCHUM)) + 
   plot_theme()
 chum1
 
 chum2 <- visreg(chum.mod5, "avg_density", 
                 scale = "response", gg = TRUE, rug = F, line.par = list(col = "black")) +
-  xlab(expression(paste("Sea otter density (#/",km^2,")"))) + 
+  xlab(expression(paste("Sea otter density (no. ",km^2,")"))) + 
   ylab(NULL) + coord_cartesian(ylim = c(0,300)) +
     geom_point(data = fish, aes(x = avg_density, y = SALCHUM)) + 
   plot_theme()
 chum2  
 
 chum.plots <- chum1 + chum2 + plot_annotation(tag_levels="a")
+#ggsave("chp1_obj2_chum_plot.png", plot = chum.plots, width = 14, height = 6)
 ```
 
 ## model table pink/chum
@@ -1825,4 +1836,29 @@ tab_model(chum.mod5, pink.mod2, transform = NULL,
                           "average sea otter density",
                           "average eelgrass biomass",
                           "distance from anadromous stream"))
+pink.plot
+chum.plots
 ```
+
+##average salmon
+```{r}
+fish %>%
+  dplyr::select(SALPINK, SALCHUM) %>%
+  dplyr::summarise(avg.pink = mean(SALPINK),
+                   sd.pink = sd(SALPINK),
+                   avg.chum = mean(SALCHUM),
+                   sd.chum = sd(SALCHUM))
+
+table(fish$SALPINK>0)
+# 24 sites had 0, 17 had positive numbers
+# 58.5% of sites had 0 pink salmon
+
+table(fish$SALCHUM >0)
+# 16 sites had 0, 25 had positive numbers
+# 39.0% of sites had 0 chum salmon
+range(fish$SALCHUM)
+range(fish$SALPINK)
+table(fish$SALCHUM)
+table(fish$SALPINK)
+```
+
