@@ -373,7 +373,7 @@ dsty <- dplyr::select(dsty, quadrat_ID, site, date, YYYYMMDD,
                       bay_code, bay_sample, notes, density_0.25msq, flowering_0.25msq)
 
 # calculate average biomass for 15 shoots for each quadrat
-require(dplyr)
+#require(dplyr)
 #df <- newdata %>%
 #  group_by(quadrat_ID) %>%
 #  mutate(avg_biomass = mean(fit))
