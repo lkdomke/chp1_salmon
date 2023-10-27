@@ -29,7 +29,7 @@ qrt <- read.csv("../APECS_DM/Data/Habitat_data/hab_quadrat_2019_clean_10-11-22.c
 
 
 qrt22 <- read.csv("../APECS_DM/Data/Habitat_data/hab_quadrat_2022_clean_3-14-23.csv", stringsAsFactors=F, header =T)
-lng22 <- read.csv("Data/hab_length_2022_Zosbiomass_3-14-23.csv", stringsAsFactors= F, head = T)
+lng22 <- read.csv("Data/hab_length_2022_Zosbiomass_10-18-23.csv", stringsAsFactors= F, head = T)
 wgt22 <- read.csv("../APECS_DM/Data/Habitat_data/hab_weight_2022_clean_3-14-23.csv", stringsAsFactors= F, header =T)
 
 ```
