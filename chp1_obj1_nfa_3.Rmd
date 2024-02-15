@@ -288,9 +288,13 @@ zero inflated negbin or the hurdle model
 ```{r}
 chum.final <- glmmTMB(abundance ~  Mon + Habitat+ (1|SiteID), 
                       data = chum.long, REML = T, family = nbinom2(link = "log"))
+
 summary(chum.final)
+
 library(emmeans)
 emmeans(chum.final, pairwise ~  Mon, random = ~ 1|SiteID, adjust = "Tukey") 
+emmeans(chum.final, pairwise ~ Habitat, random = ~1|SiteID, adjust = "Tukey")
+emmeans(chum.final, pairwise ~ Habitat + Mon, random = ~1|SiteID, adjust = "Tukey")
 
 pink.final <- glmmTMB(abundance ~ Habitat + Mon + (1|SiteID),
                       data = pink.long, REML = T, family = nbinom2(link = "log"))
@@ -502,7 +506,7 @@ Now put it together
 ```{r}
 chum.long$Mon<- plyr::revalue(chum.long$Mon, c("Apr"="April", "May"="May", "Jun"= "June", "Jul"="July"))
                            
-
+# make sure when you're putting the graph together that you include lwr and upr without the fit cause those are the lwr and upr confidence intervals. 
 habc <- ggplot(pr.habc.df) +
   geom_col(aes(x = Habitat, y = fit, fill = Habitat)) + #fill = "#7c7c7c") + #fill = "lightgray") +
   geom_errorbar(aes(x = Habitat, ymax = upr, ymin = lwr), width = 0.2) +

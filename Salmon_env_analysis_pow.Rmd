@@ -443,6 +443,11 @@ Well the fourth root and the log transformations both look pretty normal. Either
 Log transformed
 ```{r}
 lm_eel.biom.log <- lm(log(avg_biom_site_gm2) ~ avg_density + juli_date, data = dat4)
+par(mfrow=c(1,1))
+plot(log(avg_biom_site_gm2) ~ avg_density, data = dat4)
+abline(lm(log(dat4$avg_biom_site_gm2) ~ dat4$avg_density), col = "red") # definitely increases with date
+
+
 summary(lm_eel.biom.log)
 par(mfrow=c(2,2))
 plot(lm_eel.biom.log, which = 1:4)
@@ -1563,6 +1568,42 @@ summary(pink.mod2)
 library(sjPlot)
 tab_model(pink.mod2, transform = NULL)
 #ggsave("chp1_obj2_pink_plot.png", plot = pink.plot, width = 14, height = 10)
+```
+
+### best pink model magnitude of effect 
+Okay I want to create a graph that includes magnitude of effect
+But first I want to back transform the variables so that I can see the parameters in normal space
+```{r}
+summary(pink.mod2)
+
+
+pr.habc <- predict(chum.final, newdata = data.frame(Habitat = unique(chum.long$Habitat), Mon = "May", SiteID = NA), se.fit = TRUE)
+
+pr.monc <- predict(chum.final, newdata = data.frame(Habitat = "Eelgrass", Mon = unique(chum.long$Mon), SiteID = NA), se.fit = TRUE)
+
+pred <- exp(pr.habc$fit) 
+lwr <- exp(pr.habc$fit - (1.96*pr.habc$se.fit))
+upr <- exp(pr.habc$fit + (1.96*pr.habc$se.fit))
+
+pred.m <- exp(pr.monc$fit)
+lwr.m <- exp(pr.monc$fit - (1.96*pr.monc$se.fit))
+upr.m <- exp(pr.monc$fit + (1.96*pr.monc$se.fit))
+
+chum.long$Habitat <- as.character(chum.long$Habitat)
+
+pr.habc.df <- data.frame(cbind(pred, lwr, upr, unique(chum.long$Habitat))) %>%
+  dplyr::rename(Habitat = V4) %>%
+  mutate(fit = as.numeric(pred),
+         lwr = as.numeric(lwr),
+         upr = as.numeric(upr))
+
+chum.long$Mon <- as.character(chum.long$Mon)
+
+pr.mon.df <- data.frame(cbind(pred.m, lwr.m, upr.m, unique(chum.long$Mon))) %>%
+  dplyr::rename(Mon = V4) %>%
+  mutate(fit = as.numeric(pred.m),
+         lwr = as.numeric(lwr.m),
+         upr = as.numeric(upr.m))
 ```
 
 

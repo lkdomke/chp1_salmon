@@ -95,7 +95,8 @@ AIC(fit.lm, fit.lmlog) # log - log transformation is better
 fitted model:
 fit.lmlog
 
-predict values based on this relationshipo
+ predict values based on this relationship
+
 
 ```{r}
 summary(fit.lmlog)

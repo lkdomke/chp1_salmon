@@ -1,0 +1,383 @@
+---
+title: "Distance-to-anad"
+author: "Lia Domke"
+date: "1/4/2024"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+Previously we calculated distance to anadromous streams based on straight-line distance from the survey locations. However, that was 1. done in ArcGIS and 2. was based on straight line distance meaning it could go over land which is not realistic for salmon. 
+
+This scripts objective is to re-do this calculation using a script-based approach and while trying to incorporate water distance. 
+
+Steps: 
+
+1. read in shapefiles of POW, chapter 1 locations, and water polygon of POW (or create it)
+
+2. create shapefile for chapter 1 locations
+
+3. locate stream mouth locations
+Can try calculating the distance along the coastline (by using a multilinestring)
+
+```{r}
+library(sf)
+library(tidyverse)
+library(ggplot2)
+library(leaflet)
+library(raster)
+library(units)
+```
+
+# Read in data
+```{r}
+sea.point <- st_read(dsn = "Data/2018reg_sea/", layer = "sea_point") # projected CRS NAD83/Alaska Albers
+sea.stream <- st_read(dsn = "Data/2018reg_sea/", layer = "sea_stream") # projected CRS NAD83/Alaska Albers
+
+seak.shoreline <- st_read(dsn = "../GIS data_WR/", layer = "SEAK_Biol_Shoreline") # project CRS Mercator
+pow <- st_read(dsn = "../GIS data_WR/Alaska polygons/alaska_63360/", 
+        layer = "POW_PY_UTM") # Projected CRS NAD83(2011) / UTM zone 8N
+
+sites17 <- st_read(dsn = "../Chp1_salmon/", layer = "chp1obj2_sites17") %>% # this has all data and covariates so needs to be cleaned
+  st_transform(crs = st_crs(pow))
+
+sites19 <- st_read(dsn = "../Chp1_salmon/", layer = "chp1obj2_sites19") %>% # this has all data and covariates so needs to be cleaned
+  st_transform(crs = st_crs(pow))
+```
+
+Can we visualize this
+```{r}
+st_crs(pow)
+st_crs(sea.point)
+# first lets crop the sea.point and sea.stream to pow and change crs to match pow
+sea.point.pow <- sea.point %>%
+  st_transform(crs = st_crs(pow)) %>%
+  st_intersection(., pow)
+
+sea.stream.pow <- sea.stream %>%
+  st_transform(crs = st_crs(pow)) %>%
+  st_intersection(., pow)
+
+# clean the sites data
+sites17<- sites17 %>%
+  dplyr::select(c(site, site_ID, year, dist_anad_)) %>%
+  distinct()
+
+sites19 <- sites19 %>%
+  dplyr::select(c(site:site_ID, year, dist_anad_)) %>%
+  distinct() 
+
+sites <- rbind(sites17, sites19)
+
+ggplot() +
+  geom_sf(data = pow, mapping = aes()) +
+  #geom_sf(data = sea.point.pow,  mapping = aes()) +
+  geom_sf(data = sea.stream.pow, mapping = aes(), color = "blue") +
+  geom_sf(data = sites,  mapping = aes(), color = "green") +
+  theme_classic()
+
+# okay looks pretty good - we want to calculate where the steams intersect with the linestring edge of pow
+
+# cast the polygon of pow to a multilinestring
+pow.line <- st_cast(pow, to = "MULTILINESTRING")
+
+# now where does the linestring of pow intersect with the streams (so the coast)
+anad.streams <- st_intersection(sea.stream.pow, pow.line)
+
+# there are some (i think streams) that intersected with the line multiple times (so it created multipoints), but those are hard to work with so if we cast it from multipoint to point then it may be easier to visualize. this will replicate instances of multipoints over lines
+anad.multipoint <- anad.streams %>%
+  filter((as.character(st_geometry_type(geometry)) %in% c("MULTIPOINT"))) %>%
+  st_cast(., "POINT") # so this is only the multipoint instances, but I've cast them to a single point
+
+anad.streams.point <- anad.streams %>%
+  filter(!(as.character(st_geometry_type(geometry)) %in% c("MULTIPOINT"))) %>%
+  st_cast(., "POINT") # hmmm the error indicates that it only takes the point from the first coordinate only...
+
+# put it together to get the intersection streams
+anad.streams.all <- anad.streams.point %>%
+  rbind(anad.multipoint)
+  
+# so just checking, we have all the streams now together from the st_instersection BUT there are streams that dont reach the the intersection of the polyline. So we need to figure out that. 
+# first plot the different versions of the intersection data
+ggplot() +
+  geom_sf(data = anad.streams.point, mapping = aes(), color = "blue") +
+  geom_sf(data = anad.multipoint, mapping = aes(), color = "red") +
+  geom_sf(data = anad.streams.all, mapping = aes(), color = "green") +
+  geom_sf(data = pow.line, mapping = aes()) +
+  theme_classic()
+```
+
+# dealing with streams that dont intersect
+Okay now we have to deal with the fact that the pow polyline and the streams polyline don't intersect everytime. 
+```{r}
+# can we add a buffer to the land polyline to make that work?
+buff <- st_buffer(pow.line, dist = -100, singleSide= TRUE) # create a 100 m buff just on the inside of the polyline from pow (hence the neg)
+
+stream.buff.pts <- st_intersection(sea.stream.pow, buff) # creates linestrings of the streams that fall within the buffer
+
+
+# for testing lets subset by the AWC code for rivers with : one river that does and does not intersect with the land
+#stream.pts.sub <- stream.buff.pts %>%
+  #filter(AWC_CODE == "103-90-10670" | AWC_CODE == "103-90-10668") #| AWC_CODE == "103-90-10630")
+  #filter(AWC_CODE == "103-90-10630")
+
+
+stream.sub.4326 <- st_transform(stream.pts.sub, crs = st_crs(4326))
+# based on what i read on SO https://stackoverflow.com/questions/51292952/snap-a-point-to-the-closest-point-on-a-line-segment-using-sf
+# we want to find the closest point on the pow polyline from the buffered streams
+#stream.buff.pts2 <- stream.pts.sub %>%
+d <- data.frame()
+
+#i <- "103-60-10630" # for testing purposes only
+# create a for loop to loop over the different stream segments
+for(i in unique(stream.buff.pts$AWC_CODE)) {
+  pts.sub <- stream.buff.pts %>% # filter by each anadromous stream in the catelog that falls into the buffer 
+    filter(AWC_CODE == i) %>% # around the pow coastline
+    st_cast(stream.buff.pts, to = 'POINT') # breaks the linestring into multiple points
+
+    pts.ID <- pts.sub %>%
+      rownames_to_column("pt.ID") %>% # create a unique ID column for each stream segment (in pt form)
+      mutate(pt.ID = as.numeric(pt.ID)) %>%
+      mutate(pt.ID = sprintf("%.1f", pt.ID)) %>%
+      filter(str_detect(pt.ID, ".0")) # select only the pts that end in .0 which are closest to the pow coastline
+
+    my_linestring = st_nearest_points(pts.ID$geometry, pow.line) %>% # find all the nearest points from that single
+      st_as_sf() %>% # stream point to all the pow coastline points (lots)
+      mutate(dist = st_length(.)) %>% # find the shortest distance point to point
+      drop_units() %>%
+      filter(dist == min(dist))
+  
+    closest_point = st_cast(my_linestring, 'POINT')[2,] # this became a linestring again, turn it into a point
+  # and take just the second line of lines since that is the poitn that falls ON the pow coastline
+    tmp <- cbind(i, closest_point) %>% # create tmp dataframe with the point and what its stream number is
+      dplyr::rename(AWC_CODE = "i")
+    d <- rbind(d, tmp) # output is dataframe with the points on the powline 
+    print(i) # prints each stream as it goes through the loop
+
+}
+
+head(d)
+
+# then can we view this in ggplot
+ggplot() +
+  geom_sf(my_linestring, mapping = aes(), col = "light gray") +
+  geom_sf(pts.ID, mapping = aes(), col = "red") +
+  geom_sf(pow.line, mapping = aes(), col = "gray") +
+  geom_sf(stream.pts.sub, mapping = aes()) +
+  geom_sf(data = d, mapping = aes(), col = "blue") + # THIS IS WHAT I WANTED (CLOSEST PT)
+  #geom_sf(data = snapped.pt, mapping = aes(), col = "green") +
+  coord_sf(xlim = st_bbox(stream.pts.sub)[c(1,3)], ylim = st_bbox(stream.pts.sub)[c(2,4)]) +
+  theme_classic()
+
+
+# in order to use leaflet stuff needs to be in 4326
+buff.4326 <- st_transform(buff, crs = st_crs(4326))
+pow.line.4326 <- st_transform(pow.line, crs = st_crs(4326))
+streams.4326 <- st_transform(sea.stream.pow, crs = st_crs(4326))
+stream.pts.4326 <- st_transform(stream.pts.sub, crs = st_crs(4326))
+linestring.4326 <- st_transform(my_linestring, crs = st_crs(4326))
+d.4326 <- st_transform(d, crs = st_crs(4326))
+pts.4326 <- st_transform(pts.ID, crs = st_crs(4326))
+stream.buff.4326 <- st_transform(stream.buff.pts, crs = st_crs(4326)) # convert
+sites.4326 <- st_transform(sites, crs = st_crs(4326))
+
+leaflet() %>%
+  #addPolygons(data = buff.4326, fillOpacity = 0.6, fillColor = "blue") %>%
+  addPolylines(data = pow.line.4326, color = "#999999") %>% # gray
+  addPolylines(data = streams.4326, color = "#E1AD01", label = ~AWC_CODE) %>% # orange
+  #addCircleMarkers(data = pts.4326, color = "#D16103") %>% # brown
+  addCircleMarkers(data = d.4326, color = "#339900", label = ~AWC_CODE)  %>% # green
+  addCircleMarkers(data = sites.4326, color = "#FFC0CB", label = ~site_ID) 
+# okay that looks pretty good so the stream intersection looks way better and covers all streams. 
+
+
+```
+Now we need to create a for loop for each site
+# measuring distance by water
+```{r}
+st_erase = function(x, y) st_difference(x, st_union(st_combine(y)))
+# st_difference doesn't actually create a polygon with the difference between the two polygons, this custom function does however perform correctly. 
+
+s <- filter(sites, site_ID == "SWAD_B")
+s.buff <- st_buffer(s, dist = 3000)
+d.crop <- st_crop(d, s.buff)
+s.crop.pow <- st_crop(pow, s.buff) # the land in the buffer (but its extent is square)
+s.water <- st_erase(s.buff, s.crop.pow) # the water in the buffer (but the extent is circular)
+# combine the site and stream data
+s2 <- dplyr::select(s, c(site_ID, geometry))
+d2 <- dplyr::select(d.crop, c(AWC_CODE, x)) %>%
+  dplyr::rename("site_ID" = AWC_CODE, 
+                "geometry" = x)
+pts <- rbind(s2, d2)
+# lets try a diff way using rasters and not the grids
+# create raster of water polygon
+library(stars)
+library(terra)
+library(gdistance)
+library(rgis)
+r <- raster::raster()
+
+# combine land and water
+s.water2 <- s.water %>%
+  dplyr::select(geometry) %>%
+  mutate(value = 1)
+s.crop.pow2 <- s.crop.pow %>%
+  dplyr::select(geometry) %>%
+  mutate(value = NA)
+poly <- rbind(s.water2, s.crop.pow2)
+
+ggplot(poly) +
+  geom_sf(mapping = aes(fill = value))
+
+# convert to a stars feature
+water.stars <- st_as_stars(poly)
+
+# transforming it so we can use shortesPath (in gdistance)
+
+water.raster <- terra::rasterize(s.water, r)
+water.raster[is.na(water.raster)] <- 1
+plot(water.raster)
+plot(water.sp)
+plot(water.stars)
+plot(s.crop.pow$geometry)
+
+gdistance::transition(water.raster, mean, directions = 8)
+
+
+gdistance::shorestPath(water.raster, pts[1.], pts[2,], output = "SpatialLines")
+
+
+# make grid
+
+grid <- s.water %>%
+  st_make_grid(cellsize = 300, what = "centers") %>% # grid of points
+  st_intersection(., s.water) %>%
+  st_as_sf()
+
+grid <- st_transform()
+
+# create multipoint sf df of those points
+grid.mp <- grid %>% 
+  mutate(lon = sf::st_coordinates(.)[,1],
+          lat = sf::st_coordinates(.)[,2]) %>%
+  st_drop_geometry() %>%
+  as.matrix() %>%
+  st_multipoint(., dim = c("lon", "lat"))
+
+# save ranges of coordinates from sf df of points
+x.range <- max(st_coordinates(grid)[,1]) - min(st_coordinates(grid)[,1])
+y.range <- max(st_coordinates(grid)[,2]) - min(st_coordinates(grid)[,2])
+
+# order by greatest range of the grid of points
+if (x.range > y.range) {
+  sort.id <- order(st_coordinates(grid)[,1])
+} else if (y.range > x.range) {
+  sort.id <- order(st_coordinates(grid)[,2])
+} else if (y.range == x.range) {
+  sort.id <- order(st_coordinates(grid)[,2])
+}
+
+# creat lines by previous sorting and save them in the list
+lines <- lapply(1:(length(sort.id)-1), function(i) {
+  st_linestring(rbind(grid.mp[sort.id[i],], grid.mp[sort.id[i+1],]))
+})
+# this works but creates a list of linestrings (not a sf df)
+dat <- data.frame(id = 1:length(lines))
+dat$geometry <- lines[c(1:length(lines))]
+dat2 <- st_as_sf(dat, crs = st_crs(grid)) # this is now a sf dataframe 
+
+
+
+#lines <- st_nearest_points(s, d.crop)
+
+s.water <- st_within(s, s.buff)
+st_within(d, s.buff)
+ 
+if(any(s) && any(d)) {
+  st_distance()
+}
+  
+s.water.4326 <- st_transform(s.water, crs = st_crs(4326))
+ggplot() +
+  geom_sf(data = s.water, mapping = aes(), fill = "blue") +#, fill = "transparent") +
+  geom_sf(data = s, col = "green") +
+  geom_sf(data = d, col = "red") +
+  geom_sf(data = grid, col = "gray") +
+  #geom_sf(data = dat2, col = "black")+
+  coord_sf(xlim = st_bbox(s.buff)[c(1,3)], ylim = st_bbox(s.buff)[c(2,4)]) +
+  theme_classic()
+
+d.crop <- st_crop(d, s.water)
+
+plot(s.water$geometry, col = "blue")
+plot(s$geometry, col = "green", pch = 19, add =T)
+plot(grid, col = "gray", pch = 19, add = T)
+plot(d.crop$x, col = "red", pch = 19, add = T)
+plot.new()
+plot(lines[4], add = TRUE, lwd = 2, col = "black")
+
+
+leaflet() %>%
+  addPolygons(data = s.water.4326)
+
+
+plot(s.water$geometry)
+st_convex_hull(s, s.buff)
+```
+
+
+```{r}
+# Check if boats are within water bodies
+boat1_in_water <- st_within(boat1, water_bodies_no_land)
+boat2_in_water <- st_within(boat2, water_bodies_no_land)
+
+# Check if boats are in different water bodies
+if (any(boat1_in_water) && any(boat2_in_water)) {
+  # Calculate distance between boats within water bodies
+  distance_by_water <- st_distance(boat1[boat1_in_water], boat2[boat2_in_water])
+  print(distance_by_water)
+} else {
+  print("One or both boats are not in water.")
+}
+```
+
+
+```{r}
+# in order to plot with leaflet has to be wgs
+pow.line.wgs <- st_transform(pow.line, crs=st_crs(4326))
+anad.streams.wgs <- st_transform(anad.streams.point, crs = st_crs(4326)) %>%
+  mutate(long = sf::st_coordinates(.)[,1],
+         lat = sf::st_coordinates(.)[,2])
+
+anad.multipoint.wgs <- anad.multipoint %>%
+  st_transform(., crs = st_crs(4326)) %>%
+  dplyr::mutate(long = sf::st_coordinates(.)[,1],
+         lat = sf::st_coordinates(.)[,2])
+
+stream.pow.wgs <- sea.stream.pow %>%
+  st_transform(., crs = st_crs(4326))
+
+pow.wgs <- pow %>%
+  st_transform(crs = st_crs(4326))
+
+leaflet() %>%
+  addPolygons(data = pow.line.wgs, stroke = NA, fillColor = "gray") %>%
+  addPolylines(data = stream.pow.wgs) %>%
+  addMarkers(data = anad.streams.wgs, ~long, ~lat) %>%
+  addCircleMarkers(data = anad.multipoint.wgs, ~long, ~lat) %>%
+  addPolylines(data = pow.line.wgs, color = "#E1AD01")
+
+leaflet() %>%
+  addPolygons(data = buff, fillOpacity = 0.6, fillColor = "blue") %>%
+  addPolygons(data = pow.line.wgs, stroke = NA, fillColor = "gray")
+
+ggplot() +
+  geom_sf(data = pow.line, mapping = aes()) +
+  geom_sf(anad.streams, mapping = aes()) +
+  geom_sf(sea.stream.pow, mapping = aes()) +
+  theme_classic()
+```
+
+
+what if we create a buffer around the site and the nearest stream points (what if the closest is over land not over water) and then cut out the land? 
