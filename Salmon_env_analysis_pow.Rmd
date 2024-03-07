@@ -37,6 +37,7 @@ Salmon biomass will increase with eelgrass complexity, salinity and sea otter de
 #both these datasets have the corrected eelgrass biomass to mean not median
 dat4 <- read.csv("Data/salmon_env_1719_10-20-23.csv", stringsAsFactors=FALSE, header = TRUE)
 dat6 <- read.csv("Data/sal+env+sed_10.20.23.csv", stringsAsFactors = FALSE, header = TRUE) # Salmon w/ sed info
+dat7 <- read.csv("Data/sal+env+sed_UPDATED_waterdist_2-26-24.csv", stringsAsFactors = F, header = T) # Salom w/ sed and updated anad distance to go via water (rather than straight line distance) see scripts Distance-to-anad.Rmd and EDA_salmon_data_2019.rmd
 ```
 
 
@@ -126,7 +127,7 @@ add_global_label <- function(pwobj, Xlab = NULL, Ylab = NULL, Xgap = 0.03, Ygap 
 Some basic visualizations to start to understand what the data looks like. 
 ```{r}
 # visualize relationships among variables: scatterplot matricies
- corrgram(dat4[,c(6,9,15,18,19,20,25,27:29,31,35,36)], lower.panel= panel.shade,
+corrgram(dat4[,c(6,9,15,18,19,20,25,27:29,31,35,36)], lower.panel= panel.shade,
           upper.panel=panel.cor, diag.panel=panel.density, 
           labels = c("so_density", "year", "dissolved_o2_mgL", "salinity_ppt", 
                      "tempC", "avg_shoot_dens", "julian_day", "chum_abund",
@@ -138,12 +139,18 @@ Some basic visualizations to start to understand what the data looks like.
 dat_in <- dat6 %>%
   filter(trans_type == "Inside")
 
- corrgram(dat_in[,c(9,16,19,20,21,26:34,39,40)], lower.panel= panel.shade,
+corrgram(dat_in[,c(9,16,19,20,21,26:34,39,40)], lower.panel= panel.shade,
           upper.panel=panel.cor, diag.panel=panel.density)
  
- corrgram(dat_in[,c(10,27,29,31,35,40)], lower.panel= panel.shade,
+corrgram(dat_in[,c(10,27,29,31,35,40)], lower.panel= panel.shade,
           upper.panel=panel.cor, diag.panel=panel.density, labels = c("sea otter density", "julian date", "chum salmon", "pink salmon","seagrass biomass", "primary sediment"), cex = 2)
 # also looked at edge and outside, correlation (0.55) between julian day and outside sed2 avg
+
+dat7_in <- dat7 %>%
+  filter(trans_type == "Inside")
+
+corrgram(dat7_in[,c(9,16,19,20,21,26:34,39,40, 44)], lower.panel = panel.shade,
+         upper.panel = panel.cor, diag.panel = panel.density)
 ```
 
 Looking at the corrgram there is a lot going on. However, a few relationships stand out (i.e. pearson correlation greater than .6)
@@ -153,6 +160,8 @@ Looking at the corrgram there is a lot going on. However, a few relationships st
 - Same between pink and overall salmon abundance. This is sorta unneccessary to know. 
 
 - Positive correlation between shoot density and biomass (duh)
+
+UPDATE (2/26/24) also a strong (0.81) correlation between the two distance metrics
 
 **Correlations below .6**
 
@@ -1305,12 +1314,16 @@ Things we've learned along the way
 GAMs are likely way to flexible for your data -- lets stay away for now and focus on the zero - inflated and glm approaches. 
 We *know* our data is overdispersed so lets skip the poisson distribution for times sake. 
 
-# H2 w/ sed data - 1/ 2021
+# H2 w/ sed data - 1/ 2021 & 2/2024
 ```{r}
 str(dat6)
+str(dat7) # this has the updated distance from anadromous stream via water (length_anad_km)
+# i'm going to replace fish with the updated data in this analysis
+#fish <- dat6 %>%
+#  filter(trans_type == "Inside")
 
-fish <- dat6 %>%
-  filter(trans_type == "Inside")
+fish <- dat7 %>%
+  filter(trans_type == "Inside") 
 ```
 
 GLM w/ negbin
@@ -1319,7 +1332,8 @@ Do this by species because they have  unique life history traits
 str(fish)
 
 library(corrgram)
-corrgram(fish[c(10, 5, 13, 20, 21, 27, 31, 34:35, 40, 41)], lower.panel=panel.shade, upper.panel=panel.ellipse,
+corrgram(fish[c(10, 5, 13, 20, 21, 27, 29, 31, 34:35, 40, 41, 44)], lower.panel=panel.shade,
+         upper.panel=panel.ellipse,
          diag.panel=panel.density)
 # 10 - avg_density
 # 5 - year
@@ -1327,11 +1341,13 @@ corrgram(fish[c(10, 5, 13, 20, 21, 27, 31, 34:35, 40, 41)], lower.panel=panel.sh
 # 20 salinity ppt transect
 # 21 temp @ transect
 # 27 - juli date
+# 29 chum salmon abundance
 # 31 pink salmon abundance
-# 34 dist anad
+# 34 dist anad km (straight line distance)
 # 35 avg biom
 # 40 sed1_avg
 # 41 sed2_avg
+# 44 length_anad_km (updated version)
 
 par(mfrow=c(2,2))
 hist(fish$SALPINK) # looks heavily zero inflated 
@@ -1339,6 +1355,13 @@ hist(log(fish$SALPINK + 1))
 hist(fish$SALPINK^(1/4))
 hist(sqrt(fish$SALPINK))
 # none of these transformations are really that great but the log is i guess *better*. 
+
+
+# for ease of model below - we're going to replace the dist_anad_km with length_anad_km, but call it by the old name
+fish <- fish %>% # we're over writting this purposely look above if you need to recreate the original fish df
+  dplyr::select(-dist_anad_km) %>% # remove straight line distance 
+  mutate(dist_anad_km = length_anad_km) %>%
+  dplyr::select(X:abundance, dist_anad_km, avg_biom_site_gm2:sed2_sd) # reorder it so its even in the same spot in case we did something silly using order instead of name below...
 ```
 Interesting looks like theres a slightly negative relationship between sed1/sed2 and avg density. 
 
@@ -1370,8 +1393,8 @@ pink.full.mod <- glm.nb(SALPINK ~ year + juli_date + I(juli_date^2) + avg_biom_s
 
 summary(pink.full.mod)
 plot(pink.full.mod)
-# refit w.o pot outliers
-pink.full.mod.red <- glm.nb(SALPINK ~ year + juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km + sed1_avg, data = fish[-c(16, 37)], control=glm.control(maxit = 100), init.theta = 0.495)
+# refit w.o pot outliers (CHANGES - CASE NUMBER 37 NO LONGER OUTLIER; 2/26/24)
+pink.full.mod.red <- glm.nb(SALPINK ~ year + juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km + sed1_avg, data = fish[-c(16)], control=glm.control(maxit = 100), init.theta = 0.495)
 
 summary(pink.full.mod.red)
 plot(pink.full.mod)
@@ -1383,8 +1406,8 @@ summary(pink.mod1)
 anova(pink.full.mod, pink.mod1, test = "Chisq")
 # the addition of year does not significantly contribute to the full model. 
 
-# refit w/o pot outliers
-pink.mod1.red <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km + sed1_avg, data = fish[-c(16,37)], control=glm.control(maxit = 100), init.theta = 0.495)
+# refit w/o pot outliers (CHANGES - removed case number 37; not an outlier)
+pink.mod1.red <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km + sed1_avg, data = fish[-c(16)], control=glm.control(maxit = 100), init.theta = 0.495)
 
 summary(pink.mod1.red)
 anova(pink.full.mod.red, pink.mod1.red, test = "Chisq") # pref for reduced model 
@@ -1395,15 +1418,16 @@ pink.mod2 <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + a
 
 summary(pink.mod2)
 
+# sub model removing all sediment and sea otter densiy
 pink.mod2.2 <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + dist_anad_km, data = fish, control=glm.control(maxit = 100), init.theta = 0.495)
 
-anova(pink.mod2, pink.mod2.2) # just checking to make sure that they should be included. 
+anova(pink.mod2, pink.mod2.2) # just checking to make sure that they should be included (sea otter density, YES)
 summary(pink.mod2.2)
 
 ########### outlier removal
-# first drop sed1
+# first drop sed1 cCHANGES REMOVING INIT.THETA =0.495
 pink.mod2.red <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km, 
-                        data = fish[-c(16,37)], control=glm.control(maxit = 100), init.theta = 0.495)
+                        data = fish[-c(16,37)], control=glm.control(maxit = 100))
 
 summary(pink.mod2.red)
 
@@ -1427,9 +1451,9 @@ summary(pink.mod3.red)
 anova(pink.mod2.red, pink.mod3.red) # sed2 does not sig contribute to the model
 ##############
 
-#AICc(pink.intx);
+#AICc(pink.intx); BEST model is the pink.mod2
 AICc(pink.full.mod);AICc(pink.mod1);AICc(pink.mod2);AICc(pink.mod2.2); AICc(pink.mod3)
-#AICc(pink.intx.red);
+#AICc(pink.intx.red); BEST MODEL for the reduced outliers is 162
 AICc(pink.full.mod.red);AICc(pink.mod1.red);AICc(pink.mod2.red);AICc(pink.mod3.red)
 
 ```
@@ -1449,7 +1473,7 @@ fish[16,] # south fish egg (has really high eelgrass densities), high pink numbe
 fish[37,] # salt lake bay, low pink numbers
 
 # what if you removed those case numbers? 
-pink.mod2.red <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km, data = fish[-c(16,37),], control=glm.control(maxit = 100), init.theta = 0.495)
+pink.mod2.red <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km, data = fish[-c(16,37),], control=glm.control(maxit = 100))
 
 summary(pink.mod2.red)
 plot(pink.mod2.red, which = 1:4)
@@ -1505,7 +1529,7 @@ colnames(pink.cand.tbl)[2] <- ("df") # rename column 2 (K) as df
 pink.cand.tbl
 # okay just as a note AIC only values gets to the same result as using LRTT testing
 
-#write.csv(pink.cand.tbl, file = "Data/Pink_candidate_mod_tbl_9-4-23.csv")
+#write.csv(pink.cand.tbl, file = "Data/Pink_candidate_mod_tbl_2-26-24.csv")
 
 # Chi square test of full model (w/o intx) and best fitted model, reported in proposal results 
 anova(pink.full.mod, pink.mod2, test="Chisq")
@@ -1518,6 +1542,10 @@ Use pink.mod2
 visreg(pink.mod2, scale = "response")
 
 # avg_density, avg_biom, juliday, dist anad
+visreg(pink.mod2, "dist_anad_km", scale = "response", gg = T, rug = F,
+       partial = F, line.par = list(col = 'black')) +
+  geom_point(data = fish, aes(x = dist_anad_km, y = SALPINK)) +
+  plot_theme()
 
 # create final pink plots
 pink1 <- visreg(pink.mod2, "juli_date", 
@@ -1550,7 +1578,7 @@ pink4 <- visreg(pink.mod2, "dist_anad_km",
                 scale = "response", gg = TRUE, rug = F, line.par = list(col = "black")) +
   xlab(expression(paste("Distance from anadromous stream (km)"))) + 
   ylab(NULL) + coord_cartesian(ylim = c(0,300)) +
-    geom_point(data = fish, aes(x = dist_anad_km, y = SALPINK)) + 
+  geom_point(data = fish, aes(x = dist_anad_km, y = SALPINK)) + 
   plot_theme()
 pink4
 
@@ -1567,45 +1595,8 @@ summary(pink.mod2)
 
 library(sjPlot)
 tab_model(pink.mod2, transform = NULL)
-#ggsave("chp1_obj2_pink_plot.png", plot = pink.plot, width = 14, height = 10)
+#ggsave("chp1_obj2_pink_plot_2-26-24.png", plot = pink.plot, width = 14, height = 10)
 ```
-
-### best pink model magnitude of effect 
-Okay I want to create a graph that includes magnitude of effect
-But first I want to back transform the variables so that I can see the parameters in normal space
-```{r}
-summary(pink.mod2)
-
-
-pr.habc <- predict(chum.final, newdata = data.frame(Habitat = unique(chum.long$Habitat), Mon = "May", SiteID = NA), se.fit = TRUE)
-
-pr.monc <- predict(chum.final, newdata = data.frame(Habitat = "Eelgrass", Mon = unique(chum.long$Mon), SiteID = NA), se.fit = TRUE)
-
-pred <- exp(pr.habc$fit) 
-lwr <- exp(pr.habc$fit - (1.96*pr.habc$se.fit))
-upr <- exp(pr.habc$fit + (1.96*pr.habc$se.fit))
-
-pred.m <- exp(pr.monc$fit)
-lwr.m <- exp(pr.monc$fit - (1.96*pr.monc$se.fit))
-upr.m <- exp(pr.monc$fit + (1.96*pr.monc$se.fit))
-
-chum.long$Habitat <- as.character(chum.long$Habitat)
-
-pr.habc.df <- data.frame(cbind(pred, lwr, upr, unique(chum.long$Habitat))) %>%
-  dplyr::rename(Habitat = V4) %>%
-  mutate(fit = as.numeric(pred),
-         lwr = as.numeric(lwr),
-         upr = as.numeric(upr))
-
-chum.long$Mon <- as.character(chum.long$Mon)
-
-pr.mon.df <- data.frame(cbind(pred.m, lwr.m, upr.m, unique(chum.long$Mon))) %>%
-  dplyr::rename(Mon = V4) %>%
-  mutate(fit = as.numeric(pred.m),
-         lwr = as.numeric(lwr.m),
-         upr = as.numeric(upr.m))
-```
-
 
 ## Chum salmon
 ### GLM w/ negbin
@@ -1643,7 +1634,8 @@ Start with a full model and interaction.
 # included an interaction between year and date and potentially eelgrass biomass and then also with sediment.. 
 chum.intx <- glm.nb(SALCHUM ~ year * sed1_avg * avg_biom_site_gm2 * juli_date + 
                       I(juli_date^2)+ avg_density + dist_anad_km, data = fish,
-                    control=glm.control(maxit = 100), init.theta = 0.495)
+                    control=glm.control(maxit = 10000), init.theta = 0.585)
+#
 
 summary(chum.intx)
 # Okay theres a few interactions that might be sig lets drop the avg_biom first
@@ -1662,7 +1654,7 @@ Create a full model without intx
 ```{r}
 chum.full.mod <- glm.nb(SALCHUM ~ year + sed1_avg + avg_biom_site_gm2 + juli_date + 
                       I(juli_date^2) + avg_density + dist_anad_km, data = fish,
-                    control=glm.control(maxit = 100), init.theta = 0.495)
+                    control=glm.control(maxit = 10000), init.theta = 0.495)
 
 summary(chum.full.mod)
 anova(chum.full.mod, chum.intx, test = "Chisq") # okay if this is a valid way of testing this its better to include the parameters w.o intx
@@ -1718,6 +1710,7 @@ AICc(chum.full.mod); AICc(chum.mod2); AICc(chum.mod3); AICc(chum.mod4); AICc(chu
 par(mfrow = c(2,2))
 plot(chum.mod5, which = 1:4) # some concavity in the QQ plot, and potentially an increase in residuals across the predicted values. 
 fish[6,] # one potential outlier at 6 = guktu bay where 1 chum was caught
+fish[25,] # overlier where 128 chum where caught
 ```
 
 
@@ -1768,7 +1761,7 @@ colnames(chum.cand.tbl)[2] <- ("df") # rename column 2 (K) as df
 
 chum.cand.tbl
 
-#write.csv(chum.cand.tbl, file = "Data/Chum_candidate_mod_tbl_9-4-23.csv")
+#write.csv(chum.cand.tbl, file = "Data/Chum_candidate_mod_tbl_2-26-24.csv")
 
 # Chi square test of full model (w/o intx) and best fitted model, reported in proposal results 
 anova(chum.full.mod, chum.mod5, test="Chisq")
@@ -1858,7 +1851,7 @@ chum2 <- visreg(chum.mod5, "avg_density",
 chum2  
 
 chum.plots <- chum1 + chum2 + plot_annotation(tag_levels="a")
-#ggsave("chp1_obj2_chum_plot.png", plot = chum.plots, width = 14, height = 6)
+#ggsave("chp1_obj2_chum_plot_2-26-24.png", plot = chum.plots, width = 14, height = 6)
 ```
 
 ## model table pink/chum
@@ -1903,3 +1896,38 @@ table(fish$SALCHUM)
 table(fish$SALPINK)
 ```
 
+### best pink model magnitude of effect 
+Okay I want to create a graph that includes magnitude of effect
+But first I want to back transform the variables so that I can see the parameters in normal space
+```{r}
+summary(pink.mod2)
+
+
+pr.habc <- predict(chum.final, newdata = data.frame(Habitat = unique(chum.long$Habitat), Mon = "May", SiteID = NA), se.fit = TRUE)
+
+pr.monc <- predict(chum.final, newdata = data.frame(Habitat = "Eelgrass", Mon = unique(chum.long$Mon), SiteID = NA), se.fit = TRUE)
+
+pred <- exp(pr.habc$fit) 
+lwr <- exp(pr.habc$fit - (1.96*pr.habc$se.fit))
+upr <- exp(pr.habc$fit + (1.96*pr.habc$se.fit))
+
+pred.m <- exp(pr.monc$fit)
+lwr.m <- exp(pr.monc$fit - (1.96*pr.monc$se.fit))
+upr.m <- exp(pr.monc$fit + (1.96*pr.monc$se.fit))
+
+chum.long$Habitat <- as.character(chum.long$Habitat)
+
+pr.habc.df <- data.frame(cbind(pred, lwr, upr, unique(chum.long$Habitat))) %>%
+  dplyr::rename(Habitat = V4) %>%
+  mutate(fit = as.numeric(pred),
+         lwr = as.numeric(lwr),
+         upr = as.numeric(upr))
+
+chum.long$Mon <- as.character(chum.long$Mon)
+
+pr.mon.df <- data.frame(cbind(pred.m, lwr.m, upr.m, unique(chum.long$Mon))) %>%
+  dplyr::rename(Mon = V4) %>%
+  mutate(fit = as.numeric(pred.m),
+         lwr = as.numeric(lwr.m),
+         upr = as.numeric(upr.m))
+```

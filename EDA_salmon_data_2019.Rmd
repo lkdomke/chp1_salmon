@@ -31,6 +31,8 @@ dat <- read.csv("Data/FISH604_combined_10-5-19.csv", stringsAsFactors = FALSE, h
 
 allsites <- read_xls("../APECS Master repository/APECS Master repo/ALL_DATA/Lia_fish/dist2_anad_allsites_102319.xls", sheet = 1) # not on KNB
 
+anad.dist <- read.csv("Data/updated_dist_anad_km_2-23-24.csv") # has bay_id and updated distance from anadromous stream to go over water rather than straight line
+
 #biom <- read.csv("../APECS Master repository/APECS Master repo/ALL_DATA/seagrass_biomass_conversions.csv",
  #                stringsAsFactors = FALSE, header = TRUE) # not on KNB
 
@@ -71,6 +73,8 @@ str(allsites)
 # 2017 2019 sites information is at the bottom
 dist <- allsites[616:661,-c(1:2,4:6,11)] # this is the straightline distance to nearest stream
 
+
+
 dist17 <- dist %>%
   filter(habitat == "eelgrass", year == "2017")%>%
   mutate(site = site_event) %>%
@@ -101,7 +105,7 @@ levels(dist19$site)[levels(dist19$site)=="Kaguk Bay"] <- "Kaguk Cove"
 
 dist_comb <-rbind(dist19, dist17.2)
 dist_all <- dist_comb %>%
-  mutate(dist_anad_km = NEAR_DIST/100) %>%
+  mutate(dist_anad_km = NEAR_DIST/1000) %>%
   dplyr::select(-NEAR_DIST)
 
 # combine with total data
@@ -317,8 +321,36 @@ dat6 <- dat5 %>%
   mutate(site = site.x, YYYYMMDD_sed = YYYYMMDD) %>%
   dplyr::select(-c(site.x, place_name.y, site.y, place_name.x, site.y, YYYYMMDD)) %>%
   dplyr::select(site, site_ID, YYYYMMDD_sed, year, n_surv1:avg_biom_site_gm2, habitat:longitude, trans_type, sed1_avg:sed2_sd) 
+```
 
+# ADD IN - Updated anadromous by water distance
+this adds in the updated by water distance from site to nearest anadromous stream (updated 2-26-24)
+```{r}
+glimpse(anad.dist) # for each of the unique locations (n = 30), has bay_id as site identification, distance was the unadjusted distance before adjusted in qGIS, length_anad_m and length_anad_km are the distances after adjustment by water (not crossing land)
+glimpse(dat6) # includes repeating rows since we added in sediment by each transect type (edge, inside, and outside)
+
+
+# clean up anad.dist
+anad.dist2 <- anad.dist %>%
+  dplyr::select(-c(X, line_id, distance, length_anad_m))
+
+dat7 <- left_join(dat6, anad.dist2, by = c("site_ID" = "bay_id"))
+
+# out of curiousity how diff are the distances
+dff <- dat7 %>%
+  group_by(site_ID, year) %>%
+  mutate(difference = dist_anad_km -length_anad_km)
+
+range(dff$difference) # well it is a bit diff by nearly 3 km more for the new dist and some sites that had a reduction of up to a 1 km
+mean(dff$difference) # on average the updated length is slightly longer (0.6 km)
+
+```
+
+
+```{r}
+# dont write out dat6 isn't reflective of reality, but keeping here for ease of understand
 #write.csv(dat6, "Data/sal+env+sed_10.20.23.csv")
+#write.csv(dat7, "Data/sal+env+sed_UPDATED_waterdist_2-26-24.csv")
 ```
 
 
