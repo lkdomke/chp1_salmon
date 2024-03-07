@@ -25,8 +25,10 @@ read in data
 wgt <- read.csv("../APECS_DM/Data/Habitat_data/hab_weight_2021_clean_10-11-22.csv", stringsAsFactors=F, header = T)
 lng <- read.csv("../APECS_DM/Data/Habitat_data/hab_length_2021_clean_10-11-22.csv", stringsAsFactors=F, header =T)
 sp.names <- read.csv("../APECS_DM/Data/Habitat_data/hab_species_name_2021_9-27-22.csv", stringsAsFactors=F, header =T)
-qrt <- read.csv("../APECS_DM/Data/Habitat_data/hab_quadrat_2019_clean_10-11-22.csv", stringsAsFactors=F, header =T)
 
+qrt19 <- read.csv("../APECS_DM/Data/Habitat_data/hab_quadrat_2019_clean_10-11-22.csv", stringsAsFactors=F, header =T)
+lng19 <- read.csv("../APECS_DM/Data/Habitat_data/hab_length_2019_clean_10-11-22.csv")
+wgt19 <- read.csv("../APECS_DM/Data/Habitat_data/hab_weight_2019_clean_10-11-22.csv")
 
 qrt22 <- read.csv("../APECS_DM/Data/Habitat_data/hab_quadrat_2022_clean_3-14-23.csv", stringsAsFactors=F, header =T)
 lng22 <- read.csv("Data/hab_length_2022_Zosbiomass_10-18-23.csv", stringsAsFactors= F, head = T)
@@ -51,6 +53,9 @@ wgt %>%
 
 lng22.phyll<- lng22 %>%
   filter(grepl("Phyllospadix", species)) # all instances have lengths but no weights in 2022 
+
+lng19.phyll <- lng19 %>%
+  filter(grepl("Phyllospadix", species)) # about ~ 30 occurrences of phyllospadix without weights in 2019
 
 indiv <- lng %>%
   filter(grepl("Phyllospadix", species),
@@ -114,6 +119,7 @@ lng22.phyll %>%
 
 newx <- data.frame(length_mm = as.numeric(phyll.lng$length_mm))
 newx22 <- data.frame(length_mm = as.numeric(lng22.phyll$length_mm))
+newx19 <- data.frame(length_mm = as.numeric(lng19.phyll$length_mm))
 
 # use the log-log linear model (equation above) to calculate the dry mass of the shoot with 95% CI 
 # make sure to exp() the values because its a log-log relationship
@@ -137,6 +143,10 @@ corr.fit22 <- exp(pr.lm22$fit + correction)
 corr.lwr22 <- exp(pr.lm22$lwr + correction)
 corr.upr22 <- exp(pr.lm22$upr + correction)
 
+pr.lm19 <- data.frame(predict(fit.lmlog, newdata = newx19, interval = "confidence", level = 0.95))
+corr.fit19 <- exp(pr.lm19$fit + correction)
+corr.lwr19 <- exp(pr.lm19$lwr + correction)
+corr.upr19 <- exp(pr.lm19$upr + correction)
 
 # graph these new predicted values
 # create data.frame first
@@ -151,11 +161,21 @@ newdata22 <- lng22.phyll %>%
   cbind(corr.fit22) %>%
   cbind(corr.lwr22) %>%
   cbind(corr.upr22)
+
+newdata19 <- lng19.phyll %>%
+  cbind(corr.fit19) %>%
+  cbind(corr.lwr19) %>%
+  cbind(corr.upr19)
   
 ggplot() + 
   geom_ribbon(data = newdata22, aes(x = length_mm, ymin = corr.lwr22, ymax = corr.upr22), fill = "gray")+
   geom_point(data = indiv, aes(x = length_mm, y = weight_g), color = "blue") +
   geom_point(data = newdata22, aes(x = length_mm, y = corr.fit22))
+
+ggplot() + 
+  geom_ribbon(data = newdata19, aes(x = length_mm, ymin = corr.lwr19, ymax = corr.upr19), fill = "gray")+
+  geom_point(data = indiv, aes(x = length_mm, y = weight_g), color = "blue") +
+  geom_point(data = newdata19, aes(x = length_mm, y = corr.fit19))
   
 ```
 
@@ -205,8 +225,27 @@ lng22.red <- lng22 %>%
 
 lng22.phyll.weight <- rbind(lng22.red, newdata22)
 
+## now for 2019
+lng19 %>%
+  filter(grepl("Phyllospadix", species))
+
+range(newdata19$corr.fit19)
+range(indivi$weight_g)
+
+newdata19 <- newdata19 %>%
+  dplyr::rename(fit = corr.fit19, lwr = corr.lwr19, upr = corr.upr19) %>%
+  dplyr::select(-X)
+
+lng19.red <- lng19 %>%
+  anti_join(newdata19, by = c("plant_ID", "quadrat_ID", "species", "length_mm", 
+                              "weight_g", "notes")) %>%
+  mutate(fit = NA, lwr = NA, upr = NA) %>%
+  dplyr::select(-c(X)) # reduced by the number of previously unmeasured phyllospadix (n = 30)
+
+lng19.phyll.weight <- rbind(lng19.red, newdata19)
 
 # we want to keep the upr an dlwr for the mean weight based on length 
 #write.csv(lng22.phyll.weight, "../APECS_DM/Data/Habitat_data/hab_length_2022_clean_biomass_10-9-23.csv")
 #write.csv(lng.measured, "../APECS_DM/Data/Habitat_data/hab_length_2021_measuredphyllo_10-9-23.csv")
+#write.csv(lng19.phyll.weight, "../APECS_DM/Data/Habitat_data/hab_length_2019_measuredphyllo_2-7-24.csv")
 ```

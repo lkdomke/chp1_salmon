@@ -25,6 +25,25 @@ library(readxl)
 library(ggplot2)
 library(cowplot)
 ```
+#plot theme
+```{r}
+# Creates custom base plot theme that can adjust every graph that you use plot_theme for!
+
+plot_theme <- function() {
+  theme_bw(base_size = 24, base_family = "Calibri") %+replace%
+    theme(panel.background  = element_blank(),
+            plot.background = element_rect(fill="transparent", colour=NA), 
+            legend.background = element_rect(fill="transparent", colour=NA),
+            legend.key = element_rect(fill="transparent", colour=NA),
+            panel.grid.major = element_blank(), 
+            panel.grid.minor = element_blank())
+}
+
+# to use ggsave and export plots include argument 'device=cario_pdf' e.g.: 
+# ggsave("name.pdf", device=cairo_pdf, width = 6, height = 6)
+```
+
+
 # Data Cleaning
 ```{r}
 # extract what we're interested in 
@@ -196,7 +215,8 @@ lm_eqn <- function(dat){
     as.character(as.expression(eq));
 }
 ggplot(dat, aes(x = log(max_length), y = log(dw))) + 
-  geom_point() + #geom_smooth(method = "lm", se = TRUE, level = 0.95) + 
+  geom_point() + 
+  #geom_smooth(method = "lm", se = TRUE, level = 0.95) + 
   #geom_text(x = 2.5, y = -0.5, label = lm_eqn(dat), parse = TRUE, check_overlap = TRUE) + 
   theme_classic() 
 
@@ -228,7 +248,43 @@ names(dat2) <- c("dw", "max_length")
 lm4 <- lm(log(dw) ~ log(max_length), data = dat2)
 summary(lm4)
 
+AIC(lm2);AIC(lm4)
 ```
+
+#plot lm4 
+```{r}
+lm4
+pred.dat <- predict(lm4, interval = "confidence") %>%
+  data.frame()
+correction <- (sd(lm4$residuals)^2)/2
+pred.dat$corr.fit <- exp((pred.dat$fit + correction))
+pred.dat$corr.lwr <- exp((pred.dat$lwr + correction)) # also needs to be done to the CI
+pred.dat$corr.upr <- exp((pred.dat$upr + correction))
+pred.dat$max_length <- dat2$max_length
+
+
+
+ggplot(dat, aes(x = raw_x, y = raw_y)) + 
+  geom_point(colour = "blue") +  
+  theme_bw() + 
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2), colour = "red") +
+  geom_point(aes(y = predict), colour = "black")
+
+fitted.lm4.graph <- ggplot() +
+  geom_line(data = pred.dat, aes(x = max_length, y = corr.fit), size = 1.5) +
+  geom_point(data = dat2, aes(x = max_length, y = dw)) +
+  geom_ribbon(data = pred.dat, aes(x = max_length, ymin = corr.lwr, ymax = corr.upr), alpha = 0.4) +
+  labs(y = "Dry weight (g)", x = "Max length (mm)") +
+  plot_theme()
+
+range(dat2$dw)
+range(dat2$max_length)
+range(eel_sub2$shoot_dw)
+range(eel_sub2$max_length)
+
+#ggsave("Image/dw-length-relationship_lm4.png", width = 14, height = 14)
+```
+
 
 # Use selected linear model to predict 2019 biomass data
 ## Import 2019 data
