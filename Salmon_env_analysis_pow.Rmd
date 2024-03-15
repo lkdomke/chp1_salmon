@@ -1728,8 +1728,132 @@ AICc(chum.zeroinf); AICc(chum.mod5)
 summary(chum.mod5)
 ```
 
+### Model averaging? 3-14-24
+```{r}
+AIC(chum.full.mod); AIC(chum.mod2); AIC(chum.mod3); AIC(chum.mod4); AIC(chum.mod5); AIC(chum.mod6); AIC(chum.mod7)
+# lowest AIC values include chum.mod4, chum.mod5, chum.mod6 that are less than <2 AIC a part (Burnham and Anderson 2002 recommendation in Raymond et al., 2021)
+cand.model.avg <- list()
+cand.model.avg[[1]] <- chum.mod4
+cand.model.avg[[2]] <- chum.mod5
+cand.model.avg[[3]] <- chum.mod6
+
+# right now R isn't as updated as it could be, to install MuMIN
+# remotes::install_version("MuMIn", "1.46.0")
+library(MuMIn)
+avg.models <- model.avg(cand.model.avg, fit = TRUE)
+summary(avg.models)
+
+plot(avg.models)
+# okay to pull out the nicer looking model averaged coefficients:
+mA <- summary(avg.models)
+df1 <- as.data.frame(mA$coefmat.full) %>%
+  tibble::rownames_to_column(var = "coefficient")
+
+model.coeff.plot <- ggplot(data=df1[2:6,], aes(x=coefficient, y=Estimate))+ #excluding intercept because estimates so much larger
+      geom_hline(yintercept=0, color = "red",linetype="dashed", lwd=1.5)+ #add dashed line at zero
+      geom_errorbar(aes(ymin=Estimate-`Adjusted SE`, ymax=Estimate+`Adjusted SE`), colour="blue", #adj SE
+                  width=0, lwd=1.5, alpha = 0.7) +
+      coord_flip()+ # flipping x and y axes
+      geom_point(size=8)+theme_classic(base_size = 20)+ ylab("Coefficient")
+
+#ggsave("Image/Model_avg_coeff_plot.jpg", model.coeff.plot, width = 10, height =8)
+```
+#### predict model average
+```{r}
+# predict over julian day and hold everything else at a median value
+newdata.j <- data.frame(juli_date = seq(min(fish$juli_date), max(fish$juli_date)),
+                        juli_date2 = ((seq(min(fish$juli_date), max(fish$juli_date)))^2),
+                        avg_density = rep(median(fish$avg_density, na.rm = T), 130),
+                        sed2_avg = rep(median(fish$sed2_avg), 130),
+                        sed1_avg = rep(median(fish$sed1_avg), 130))
+# add in julian day predictions to data frame
+pred.j <- predict(avg.models, se.fit =TRUE, type = "response", newdata = newdata.j)
+newdata.j$predict <- pred.j$fit
+newdata.j$lwr <- pred.j$fit - pred.j$se.fit
+newdata.j$upr <- pred.j$fit + pred.j$se.fit
+
+# predict over sea otter density
+newdata.so <- data.frame(juli_date = rep(median(fish$juli_date), 100),
+                         juli_date2 = rep(median(fish$juli_date^2), 100),
+                         avg_density = seq(min(fish$avg_density, na.rm = T), max(fish$avg_density, na.rm = T), length.out = 100),
+                         sed2_avg = rep(median(fish$sed2_avg), 100),
+                         sed1_avg = rep(median(fish$sed1_avg), 100))
+pred.so <- predict(avg.models, se.fit = TRUE, type = "response", newdata=newdata.so)
+newdata.so$predict <- pred.so$fit
+newdata.so$lwr <- pred.so$fit - pred.so$se.fit
+newdata.so$upr <- pred.so$fit + pred.so$se.fit
+
+# predict over secondary average sed scores
+newdata.sed2 <- data.frame(juli_date = rep(median(fish$juli_date), 100),
+                         juli_date2 = rep(median(fish$juli_date^2), 100),
+                         avg_density = rep(median(fish$avg_density, na.rm = T), 100),
+                         sed2_avg = seq(min(fish$sed2_avg), max(fish$sed2_avg), length.out = 100),
+                         sed1_avg = rep(median(fish$sed1_avg), 100))
+
+pred.sed2 <- predict(avg.models, se.fit = TRUE, type = "response", newdata=newdata.sed2)
+newdata.sed2$predict <- pred.sed2$fit
+newdata.sed2$lwr <- pred.sed2$fit - pred.sed2$se.fit
+newdata.sed2$upr <- pred.sed2$fit + pred.sed2$se.fit
+
+# predict over primary average sed scores
+newdata.sed1 <- data.frame(juli_date = rep(median(fish$juli_date), 100),
+                         juli_date2 = rep(median(fish$juli_date^2), 100),
+                         avg_density = rep(median(fish$avg_density, na.rm = T), 100),
+                         sed2_avg = rep(median(fish$sed2_avg), 100),
+                         sed1_avg = seq(min(fish$sed1_avg), max(fish$sed1_avg), length.out = 100))
+
+pred.sed1 <- predict(avg.models, se.fit = TRUE, type = "response", newdata=newdata.sed1)
+newdata.sed1$predict <- pred.sed1$fit
+newdata.sed1$lwr <- pred.sed1$fit - pred.sed1$se.fit
+newdata.sed1$upr <- pred.sed1$fit + pred.sed1$se.fit
+
+```
+
+#### plot averaged/predicted models
+```{r}
+p.jday <- ggplot(newdata.j) +
+  geom_line(aes(x = juli_date, y = predict)) +
+  geom_ribbon(aes(x = juli_date, ymin = lwr, ymax = upr), alpha = 0.2) +
+  geom_point(data = fish, aes(x = juli_date, y  = SALCHUM)) +
+  plot_theme()
+
+p.jday
+
+p.so <- ggplot(newdata.so) +
+  geom_line(aes(x = avg_density, y = predict)) +
+  geom_ribbon(aes(x = avg_density, ymin = lwr, ymax = upr), alpha = 0.2) +
+  geom_point(data = fish, aes(x = avg_density, y  = SALCHUM)) +
+  plot_theme()
+
+p.so
+
+p.sed2 <- ggplot(newdata.sed2) + 
+  geom_line(aes(x = sed2_avg, y = predict)) +
+  geom_ribbon(aes(x = sed2_avg, ymin = lwr, ymax = upr), alpha = 0.2) +
+  geom_point(data = fish, aes(x = sed2_avg, y  = SALCHUM)) +
+  plot_theme()
+
+p.sed2
+
+p.sed1 <- ggplot(newdata.sed1) + 
+  geom_line(aes(x = sed1_avg, y = predict)) +
+  geom_ribbon(aes(x = sed1_avg, ymin = lwr, ymax = upr), alpha = 0.2) +
+  geom_point(data = fish, aes(x = sed1_avg, y  = SALCHUM)) +
+  plot_theme()
+
+p.sed1
+
+library(patchwork)
+
+(p.jday | p.so) / (p.sed2 | p.sed1)
+
+#ggsave("Image/model_averaged_chum_predictions.jpg", width = 14, height = 10)
+```
+
+
 ### Candidate model table
 ```{r}
+library(AICcmodavg) # redo this so that it uses AICc from AICcmodavg
 cand.models <- list() # create an empty list to include all the candidate models
 cand.models[[1]] <- chum.full.mod # add in  models one at a time
 cand.models[[2]] <- chum.intx
