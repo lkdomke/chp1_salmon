@@ -40,7 +40,7 @@ library(pathroutr)
 sea.point <- st_read(dsn = "Data/2018reg_sea/", layer = "sea_point") # projected CRS NAD83/Alaska Albers
 sea.stream <- st_read(dsn = "Data/2018reg_sea/", layer = "sea_stream") # projected CRS NAD83/Alaska Albers
 
-seak.shoreline <- st_read(dsn = "../GIS data_WR/", layer = "SEAK_Biol_Shoreline") # project CRS Mercator
+#seak.shoreline <- st_read(dsn = "../GIS data_WR/", layer = "SEAK_Biol_Shoreline") # project CRS Mercator
 pow <- st_read(dsn = "../GIS data_WR/Alaska polygons/alaska_63360/", 
         layer = "POW_PY_UTM") # Projected CRS NAD83(2011) / UTM zone 8N
 
@@ -313,7 +313,7 @@ for(t in unique(sites.sf2$bay_id)) {
     st_cast(to = "LINESTRING")
 
   shortest.linestring <- dist.by.water %>%
-    mutate(distance = st_length(.)) %>%
+    dplyr::mutate(distance = st_length(.)) %>%
     filter(distance == min(distance))
   
 
@@ -474,17 +474,17 @@ For a subset of sites the pathroutr doesn't work because none of the line/points
 ```{r}
 # read out the shapefiles for land, anadromous streams, linestring between sites, and sites and the manually calculated sites
 
-write_sf(all.distance, dsn = "Data/dist_anad_shapefiles/", layer = "sites_line_to_anad",
-         driver = "ESRI Shapefile")
+#write_sf(all.distance, dsn = "Data/dist_anad_shapefiles/", layer = "sites_line_to_anad",
+#         driver = "ESRI Shapefile")
 
-write_sf(all.anad, dsn = "Data/dist_anad_shapefiles/", layer = "nearest_anad_streams",
-         driver = "ESRI Shapefile")
+#write_sf(all.anad, dsn = "Data/dist_anad_shapefiles/", layer = "nearest_anad_streams",
+#         driver = "ESRI Shapefile")
 
-write_sf(pow, dsn = "Data/dist_anad_shapefiles/", layer = "pow_land", 
-         driver = "ESRI Shapefile")
+#write_sf(pow, dsn = "Data/dist_anad_shapefiles/", layer = "pow_land", 
+#         driver = "ESRI Shapefile")
 
-write_sf(all.sites, dsn = "Data/dist_anad_shapefiles/", layer = "unique_chp1_sites",
-         driver = "ESRI Shapefile")
+#write_sf(all.sites, dsn = "Data/dist_anad_shapefiles/", layer = "unique_chp1_sites",
+#         driver = "ESRI Shapefile")
 
 ```
 
@@ -509,7 +509,6 @@ updated.anad.dist <- updated.anad %>%
 
 # create site maps
 ```{r}
-plot_list = list()
 
 plot_fxn <- function(siteID) {
   ggplot() +
@@ -518,23 +517,41 @@ plot_fxn <- function(siteID) {
     geom_sf({d %>% st_crop(st_bbox(st_buffer((filter(sites.sf, bay_id == siteID)), dist = 5000)))}, 
       mapping = aes(geometry = x), color = "blue") +
     geom_sf({all.sites %>% filter(bay_id == siteID)}, mapping = aes(geometry = geometry), color = "green") +
-    geom_sf({updated.anad %>% filter(bay_id == siteID)}, mapping = aes(geometry = geometry), color = "pink") +
+    geom_sf({updated.anad %>% filter(bay_id == siteID)}, mapping = aes(geometry = geometry), color = "#FF02F7", linewidth = 1.2) +
     labs(subtitle = siteID) +
     theme_bw() +
-    theme(axis.text.x= element_text(angle = 45))
+    theme(axis.text.x= element_text(angle = 45)) # orang F17300
 }
 
+# do this twice to allow the figures to be larger
+# try 15 and 15
+plot_list = list()
 
-for(i in unique(updated.anad.dist$bay_id)) {
+updated.anad.dist1 <- updated.anad.dist[c(1:15),]
+
+for(i in unique(updated.anad.dist1$bay_id)) {
   plot_list[[i]] = plot_fxn(i)
   print(i)
 }
 
 # this process takes awhile so don't run it unless necessary
-#grid.plot.anad <- gridExtra::grid.arrange(grobs = plot_list, ncol = 5)
-#grid.plot.anad
+grid.plot.anad1 <- gridExtra::grid.arrange(grobs = plot_list, ncol = 4)
+grid.plot.anad1
+
+updated.anad.dist2 <- updated.anad.dist[c(15:30),]
+plot_list = list()
+for(i in unique(updated.anad.dist2$bay_id)) {
+  plot_list[[i]] = plot_fxn(i)
+  print(i)
+}
+
+grid.plot.anad2 <- gridExtra::grid.arrange(grobs = plot_list, ncol = 4)
+grid.plot.anad2
 
 #ggsave("distance_to_anad_2-23-24.png", plot = grid.plot.anad, width = 14, height = 16)
+#ggsave("Manuscript_scripts&data/Figures&Tables/distance_to_anad_SuppFig1-1.png", plot = grid.plot.anad1, width = 14, height = 16)
+
+#ggsave("Manuscript_scripts&data/Figures&Tables/distance_to_anad_SuppFig1-2.png", plot = grid.plot.anad2, width = 14, height = 16)
 ```
 
 

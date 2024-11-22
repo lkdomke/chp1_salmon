@@ -1,0 +1,7 @@
+"","Modnames","df","AICc","Delta_AICc","AICcWt","BIC","Delta_BIC","BICWt"
+"1","SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km",7,163.82,0,0.5,172.14,0,0.57
+"2","SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km + sed2_avg",8,164.94,1.12,0.29,173.81,1.67,0.25
+"3","SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km + sed1_avg",8,166.01,2.19,0.17,174.87,2.73,0.15
+"4","SALPINK ~ year + juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km + sed1_avg",9,169.34,5.52,0.03,178.54,6.4,0.02
+"5","SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + dist_anad_km",6,171.76,7.94,0.01,179.34,7.2,0.02
+"6","SALPINK ~ year * sed1_avg * avg_biom_site_gm2 * juli_date + I(juli_date^2) + avg_density + dist_anad_km",20,220.01,56.19,0,209.58,37.43,0

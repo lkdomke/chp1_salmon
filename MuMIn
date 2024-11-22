@@ -1,0 +1,7 @@
+@Manual{,
+  title = {MuMIn: Multi-Model Inference},
+  author = {Kamil Bartoń},
+  year = {2022},
+  note = {R package version 1.46.0},
+  url = {https://CRAN.R-project.org/package=MuMIn},
+}

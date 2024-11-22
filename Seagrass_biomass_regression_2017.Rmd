@@ -262,7 +262,16 @@ pred.dat$corr.lwr <- exp((pred.dat$lwr + correction)) # also needs to be done to
 pred.dat$corr.upr <- exp((pred.dat$upr + correction))
 pred.dat$max_length <- dat2$max_length
 
-
+## create equation function
+lm4_eqn <- function(mod) {
+    m <- mod;
+    eq <- substitute(atop("log("~~italic(y) == a + b %*% "log("~~italic(x)~~")"*",") ~~italic(r)^2~"="~r2, 
+         list(a = format(unname(coef(m)[1]), digits = 2),
+              b = format(unname(coef(m)[2]), digits = 2),
+             r2 = format(summary(m)$r.squared, digits = 3)))
+    as.character(as.expression(eq));
+}
+lm4_eqn(lm4)
 
 ggplot(dat, aes(x = raw_x, y = raw_y)) + 
   geom_point(colour = "blue") +  
@@ -270,12 +279,18 @@ ggplot(dat, aes(x = raw_x, y = raw_y)) +
   geom_smooth(method = "lm", formula = y ~ x + I(x^2), colour = "red") +
   geom_point(aes(y = predict), colour = "black")
 
-fitted.lm4.graph <- ggplot() +
+#fitted.lm4.graph <- 
+ggplot() +
   geom_line(data = pred.dat, aes(x = max_length, y = corr.fit), size = 1.5) +
   geom_point(data = dat2, aes(x = max_length, y = dw)) +
   geom_ribbon(data = pred.dat, aes(x = max_length, ymin = corr.lwr, ymax = corr.upr), alpha = 0.4) +
   labs(y = "Dry weight (g)", x = "Max length (mm)") +
+  geom_text(aes(x = 40, y = 0.05), label = lm4_eqn(lm4), parse = TRUE, 
+            check_overlap = TRUE, size = 5, hjust = 0) + 
+  geom_text(aes(40, y = 0.02), label = expression(paste(italic(r)^2 "=" ))
   plot_theme()
+
+
 
 range(dat2$dw)
 range(dat2$max_length)

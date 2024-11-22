@@ -1,0 +1,483 @@
+---
+title: "Distance-to-anad-calculations"
+author: "Lia Domke"
+date: "1/4/2024"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Previously we calculated distance to anadromous streams based on straight-line distance from the survey locations. However, that was 1. done in ArcGIS and 2. was based on straight line distance meaning it could go over land which is not realistic for salmon. 
+
+This scripts objective is to re-do this calculation using a script-based approach and while trying to incorporate water distance. 
+
+Steps: 
+
+1. read in shapefiles of POW, chapter 1 locations, and water polygon of POW (or create it)
+
+2. create shapefile for chapter 1 locations
+
+3. locate stream mouth locations
+Can try calculating the distance along the coastline (by using a multilinestring)
+
+```{r}
+library(sf)
+library(tidyverse)
+library(ggplot2)
+library(leaflet)
+library(raster)
+library(units)
+library(igraph)
+library(tidygraph)
+library(sfnetworks)
+library(ggspatial)
+library(pathroutr)
+```
+
+# Read in data
+```{r}
+sea.point <- st_read(dsn = "Data/2018reg_sea/", layer = "sea_point") # projected CRS NAD83/Alaska Albers
+sea.stream <- st_read(dsn = "Data/2018reg_sea/", layer = "sea_stream") # projected CRS NAD83/Alaska Albers
+
+pow <- st_read(dsn = "../GIS data_WR/Alaska polygons/alaska_63360/", 
+        layer = "POW_PY_UTM") # Projected CRS NAD83(2011) / UTM zone 8N
+
+sites17 <- read.csv("../APECS_DM/Data/Site_metadata_allyears_8-18-22.csv") %>%
+  filter(!(site_2017 == ""))
+
+sites19 <- read.csv("../APECS_DM/Data/Site_metadata_allyears_8-18-22.csv") %>%
+  filter(!(site_2019 == ""),
+         habitat == "eelgrass",
+         site_2017 == "")
+```
+
+Create sf of sites
+```{r}
+site_list <- list()
+
+sites <- rbind(sites17, sites19) %>%
+  unite(bay_id, c(bay_code, bay_sample)) %>%
+  dplyr::select(c(site_2017, site_2019, place_name, bay_id, habitat, latitude, longitude))
+
+sites.sf <- st_as_sf(sites, coords = c("longitude", "latitude"), crs = 4326) %>%
+  st_transform(., crs = st_crs(pow))
+```
+
+
+Visualize sites and anadromous streams
+# identify streams along land shapefile
+```{r}
+st_crs(pow)
+st_crs(sea.point)
+# first lets crop the sea.point and sea.stream to pow and change crs to match pow
+sea.point.pow <- sea.point %>%
+  st_transform(crs = st_crs(pow)) %>%
+  st_intersection(., pow)
+
+sea.stream.pow <- sea.stream %>%
+  st_transform(crs = st_crs(pow)) %>%
+  st_intersection(., pow)
+
+# clean the sites data
+glimpse(sites.sf) # st to the crs of pow
+
+ggplot() +
+  geom_sf(data = pow, mapping = aes()) +
+  #geom_sf(data = sea.point.pow,  mapping = aes()) +
+  geom_sf(data = sea.stream.pow, mapping = aes(), color = "blue") +
+  geom_sf(data = sites.sf,  mapping = aes(), color = "green") +
+  theme_classic()
+
+# okay looks pretty good - we want to calculate where the steams intersect with the linestring edge of pow
+
+# cast the polygon of pow to a multilinestring
+pow.line <- st_cast(pow, to = "MULTILINESTRING")
+
+# now where does the linestring of pow intersect with the streams (so the coast)
+anad.streams <- st_intersection(sea.stream.pow, pow.line)
+
+# there are some (i think streams) that intersected with the line multiple times (so it created multipoints), but those are hard to work with so if we cast it from multipoint to point then it may be easier to visualize. this will replicate instances of multipoints over lines
+anad.multipoint <- anad.streams %>%
+  filter((as.character(st_geometry_type(geometry)) %in% c("MULTIPOINT"))) %>%
+  st_cast(., "POINT") # so this is only the multipoint instances, but I've cast them to a single point
+
+anad.streams.point <- anad.streams %>%
+  filter(!(as.character(st_geometry_type(geometry)) %in% c("MULTIPOINT"))) %>%
+  st_cast(., "POINT") # hmmm the error indicates that it only takes the point from the first coordinate only...
+
+# put it together to get the intersection streams
+anad.streams.all <- anad.streams.point %>%
+  rbind(anad.multipoint)
+```
+
+## Streams that dont intersect land
+Okay now we have to deal with the fact that the pow polyline and the streams polyline don't intersect everytime. 
+```{r}
+# can we add a buffer to the land polyline to make that work?
+buff <- st_buffer(pow.line, dist = -100, singleSide= TRUE) # create a 100 m buff just on the inside of the polyline from pow (hence the neg)
+
+stream.buff.pts <- st_intersection(sea.stream.pow, buff) # creates linestrings of the streams that fall within the buffer
+
+# we want to find the closest point on the pow polyline from the buffered streams
+#stream.buff.pts2 <- stream.pts.sub %>%
+d <- data.frame()
+
+# create a for loop to loop over the different stream segments
+for(i in unique(stream.buff.pts$AWC_CODE)) {
+  pts.sub <- stream.buff.pts %>% # filter by each anadromous stream in the catelog that falls into the buffer 
+    filter(AWC_CODE == i) %>% # around the pow coastline
+    st_cast(stream.buff.pts, to = 'POINT') # breaks the linestring into multiple points
+
+    pts.ID <- pts.sub %>%
+      rownames_to_column("pt.ID") %>% # create a unique ID column for each stream segment (in pt form)
+      mutate(pt.ID = as.numeric(pt.ID)) %>%
+      mutate(pt.ID = sprintf("%.1f", pt.ID)) %>%
+      filter(str_detect(pt.ID, ".0")) # select only the pts that end in .0 which are closest to the pow coastline
+
+    my_linestring = st_nearest_points(pts.ID$geometry, pow.line) %>% # find all the nearest points from that single
+      st_as_sf() %>% # stream point to all the pow coastline points (lots)
+      mutate(dist = st_length(.)) %>% # find the shortest distance point to point
+      drop_units() %>%
+      filter(dist == min(dist))
+  
+    closest_point = st_cast(my_linestring, 'POINT')[2,] # this became a linestring again, turn it into a point
+  # and take just the second line of lines since that is the poitn that falls ON the pow coastline
+    tmp <- cbind(i, closest_point) %>% # create tmp dataframe with the point and what its stream number is
+      dplyr::rename(AWC_CODE = "i")
+    d <- rbind(d, tmp) # output is dataframe with the points on the powline 
+    print(i) # prints each stream as it goes through the loop
+
+}
+
+head(d)
+
+# in order to use leaflet stuff needs to be in 4326
+buff.4326 <- st_transform(buff, crs = st_crs(4326))
+pow.line.4326 <- st_transform(pow.line, crs = st_crs(4326))
+streams.4326 <- st_transform(sea.stream.pow, crs = st_crs(4326))
+stream.pts.4326 <- st_transform(stream.pts.sub, crs = st_crs(4326))
+linestring.4326 <- st_transform(my_linestring, crs = st_crs(4326))
+d.4326 <- st_transform(d, crs = st_crs(4326))
+pts.4326 <- st_transform(pts.ID, crs = st_crs(4326))
+stream.buff.4326 <- st_transform(stream.buff.pts, crs = st_crs(4326)) # convert
+sites.4326 <- st_transform(sites.sf, crs = st_crs(4326))
+
+#leaflet() %>%
+  #addPolygons(data = buff.4326, fillOpacity = 0.6, fillColor = "blue") %>%
+  #addPolylines(data = pow.line.4326, color = "#999999") %>% # gray
+  #addPolylines(data = streams.4326, color = "#E1AD01", label = ~AWC_CODE) %>% # orange
+  #addCircleMarkers(data = pts.4326, color = "#D16103") %>% # brown
+  #addCircleMarkers(data = d.4326, color = "#339900", label = ~AWC_CODE)  %>% # green
+  #addCircleMarkers(data = sites.4326, color = "#FFC0CB", label = ~bay_id) 
+# okay that looks pretty good so the stream intersection looks way better and covers all streams. 
+```
+
+Now we need to create a for loop for each site
+# Measuring distance by water
+trying using pathroutr 
+```{r}
+# Install new pathroutr version from my R-Universe repository (https://github.com/jmlondon/pathroutr)
+#install.packages("pathroutr", repos = "https://jmlondon.r-universe.dev")
+library(pathroutr)
+
+st_erase = function(x, y) st_difference(x, st_union(st_combine(y)))
+# st_difference doesn't actually create a polygon with the difference between the two polygons, this custom function does however perform correctly. 
+
+# This is based on an example from the disucssion section. 
+# presuming you have a shapefile for the local region.
+# we need to iterate this across all our sites
+distance <- data.frame() # create empty distance data frame to fill with our shortest distance by water
+land <- data.frame()
+anad <- data.frame()
+
+#t <- "BAKE_A" # for testing purposes
+# SALA_A doesn't work as part of this iterative process because one of the streams means that the straight line distance never is in water which causes the barrier segments portion to break down, we want to drop that stream
+# okay lets drop the problematic children and include just the sites we know work
+sites.sf2 <- sites.sf %>%
+  filter(!(bay_id == "BLAQ_A" | bay_id == "FARA_A" | bay_id == "GARC_A" | bay_id == "HETA_A" |
+             bay_id == "NFEI_A" | bay_id == "NPAS_A" | bay_id == "REFU_A" | bay_id == "SALA_A" |
+             bay_id == "SFEI_A" | bay_id == "SHIN_A" | bay_id == "HECA_A")) %>%
+  dplyr::select(bay_id, geometry) %>%
+  distinct()
+
+for(t in unique(sites.sf2$bay_id)) {
+  s <- filter(sites.sf2, bay_id == t) %>%
+    dplyr::select(bay_id, geometry) %>%
+    distinct()
+  s.buff <- st_buffer(s, dist = 3000) # 3000 m buffer around the site
+  d.crop <- st_crop(d, s.buff) # crop the anadromous waters cat (d), by the buffer
+  s.crop.pow <- st_crop(pow, s.buff) %>%
+   st_cast(to = "POLYGON")# the land in the buffer (but its extent is square)
+  s.water <- st_erase(s.buff, s.crop.pow) # the water in the buffer (but the extent is circular)
+
+  #s.crop.pow <- sf::st_make_valid(s.crop.pow) # make sure the barrier is valid 
+
+
+# now create a line from your site to all streams, add more segments, and then cast to points
+  str.dist <- sf::st_nearest_points(s$geometry, d.crop) %>%
+    st_as_sf() %>% # these are the straight line distance from each point
+    rownames_to_column(var = "line_id") %>% # create unique ID code for each path
+    group_by(line_id) %>% 
+    dplyr::summarise(do_union = FALSE) %>% # not entirely sure if this step is necessary
+    mutate(distance = st_length(.)) %>% # find the longest length away and drop
+    drop_units() %>%
+    filter(distance < 2500) %>%
+    st_segmentize(., units::set_units(10, m)) %>% # create segments of the line into multiple points
+    st_cast(to = "MULTIPOINT") %>% # cast to points
+    rename("geometry" = x) 
+    
+
+# pts/str.dist and barrier(e.g. land) must be in the same projection; use
+# sf::st_transform() if needed
+# st_crs(str.dist)
+# st_crs(s.crop.pow) # great they are 
+
+# get barrier segments or the portion (start/end ID) for the points that cross land
+#segs_tbl <- get_barrier_segments(str.dist, s.crop.pow) # this returns the start_idx and end_idx are the row index of the two points that bookend each stretch of points that cross the land (intersect with land). The n_pts indicate the number of consecutive points that cross land, start_pt and end_pt store the sf geometry for the bookended points (represented by start_idx adn end_idx)
+
+# create the visibility graph from your shapefile data
+# make sure its a simple feature collection
+  vis_graph <- prt_visgraph(s.crop.pow)
+#Let’s take a look at our network. The network stores both “nodes” and “edges” and we need to “activate” one or the other before converting to a simple feature collection.
+# vis_graph_sf <- sfnetworks::activate(vis_graph,"edges") %>% sf::st_as_sf()
+
+
+# re-route the tracks around the land barrier
+  track_pts_fix <- prt_reroute(str.dist, s.crop.pow, vis_graph, blend = TRUE)
+  track_pts_fix <- prt_update_points(track_pts_fix, str.dist)
+
+# update the original data file with the re-routed locations
+  dist.by.water <- track_pts_fix %>%
+    st_as_sf() %>%
+    ungroup() %>%
+    group_by(line_id) %>%
+    dplyr::summarise(do_union = FALSE) %>%
+    st_cast(to = "LINESTRING")
+
+  shortest.linestring <- dist.by.water %>%
+    mutate(distance = st_length(.)) %>%
+    filter(distance == min(distance))
+  
+
+# now take what we looped over and output different versions of it 
+  tmp <- cbind(s, shortest.linestring) #%>% # create tmp dataframe with the point and what its site number is
+  distance <- rbind(distance, tmp) # output is dataframe with the site point, distance to closest anad, and the linestring along the water from the point to the water
+  print(t)
+  
+  site.d <- data.frame(bay_id = rep(unique(s$bay_id), nrow(d.crop)))
+  tmp2 <- cbind(site.d, d.crop) %>%
+    dplyr::rename(geometry = x) 
+  anad <- rbind(tmp2, anad) %>%
+    st_as_sf(crs = st_crs(land))
+  site.anad <- data.frame(bay_id = rep(unique(s$bay_id), nrow(s.crop.pow)))
+  tmp3 <- cbind(s.crop.pow, site.anad) %>%
+    st_transform(., crs = st_crs(s.crop.pow))
+  land <- rbind(land, tmp3) %>%
+    st_as_sf(crs = st_crs(land))
+
+}
+
+# so the site specific outputs are:
+glimpse(distance) # distance to anad streams including linestring
+glimpse(anad) # anadromous streams surrounding site
+glimpse(land) # buffered land polygon around a site
+
+# good finally all in the same crs
+st_crs(land) == st_crs(anad)
+st_crs(land) == st_crs(distance)
+st_crs(anad) == st_crs(distance)
+```
+
+## Map the results
+```{r}
+# so that only worked for a subset of sites, but lets look at how it did for those 12 and we'll deal with the rest of the problem children sites later
+
+ggplot() +
+  geom_sf(s.crop.pow, mapping = aes(), fill = "gray") + 
+  geom_sf(d.crop, mapping = aes(), color = "blue") +
+  geom_sf(s, mapping = aes(), color = "red") +
+  geom_sf(str.dist, mapping = aes(), alpha = 0.2) +
+  geom_sf(track_pts_fix, mapping = aes()) +
+  #geom_sf(one, mapping = aes(color = line_id), alpha = 0.6) +
+  geom_sf(shortest.linestring, mapping = aes(), color = "pink") +
+  theme_bw()
+
+site_list2 <- list()
+
+site.map.anad.fxn <- function(siteID){
+  ggplot() +
+    geom_sf({pow %>% st_crop(st_bbox(st_buffer((filter(sites.sf, bay_id == siteID)), dist = 3000)))}, 
+            mapping = aes(geometry = geometry), fill = "gray") +
+    geom_sf({sites.sf %>% filter(bay_id == siteID)}, mapping = aes(geometry = geometry), color = "green") +
+    geom_sf({anad %>% filter(bay_id == siteID)}, mapping = aes(geometry = geometry), color = "blue") +
+    labs(subtitle = siteID) +
+    theme_bw() +
+    theme(axis.text.x= element_text(angle = 45))
+}
+
+for(i in unique(sites.sf2$bay_id)) {
+  site_list2[[i]] = site.map.anad.fxn(i)
+  print(i)
+}
+
+site.anad.maps <- gridExtra::grid.arrange(grobs = site_list2)
+#site.anad.maps
+
+#ggsave("site_anad_maps_facet_chp1.png", site.anad.maps, width = 12, height = 14)
+
+# to map each one need to run it either as a function or for loop
+plot_list = list()
+
+plot_fxn <- function(siteID) {
+  ggplot() +
+    geom_sf({pow %>% st_crop(st_bbox(st_buffer((filter(sites.sf, bay_id == siteID)), dist = 3000)))}, 
+            mapping = aes(geometry = geometry), fill = "gray") +
+    geom_sf({anad %>% filter(bay_id == siteID)}, mapping = aes(geometry = geometry), color = "blue") +
+    geom_sf({distance %>% filter(bay_id == siteID)}, mapping = aes(geometry = geometry), color = "green") +
+    geom_sf({distance %>% filter(bay_id == siteID)}, mapping = aes(geometry = geometry.1), color = "pink") +
+    labs(subtitle = siteID) +
+    theme_bw()
+}
+
+
+
+for(i in unique(distance$bay_id)) {
+  plot_list[[i]] = plot_fxn(i)
+  print(i)
+}
+
+
+grid.plot.anad <- gridExtra::grid.arrange(grobs = plot_list)
+#ggsave("distance_to_anad.png", plot = grid.plot.anad, width = 16, height = 12)
+```
+
+# Shapefile of straightline distance
+```{r}
+# can we create shapefile of the linestrings straight line to closest point? This will have to be adjusted by hand in qgis to pull it off the land
+
+sites.red <- sites.sf2 %>%
+  st_drop_geometry()
+sites.sf.manual <- anti_join(sites.sf, sites.red, by = "bay_id") # 10 sites not amendable to calculating distance
+
+straight.distance <- data.frame()
+manual.anad <- data.frame()
+
+#m <- "BLAQ_A"
+for(m in unique(sites.sf.manual$bay_id)) {
+  s <- filter(sites.sf.manual, bay_id == m) %>%
+    dplyr::select(bay_id, geometry)
+  s.buff <- st_buffer(s, dist = 3000) # 3000 m buffer around the site
+  d.crop <- st_crop(d, s.buff) # crop the anadromous waters cat (d), by the buffer
+  s.crop.pow <- st_crop(pow, s.buff) %>%
+   st_cast(to = "POLYGON")# the land in the buffer (but its extent is square)
+  s.water <- st_erase(s.buff, s.crop.pow) # the water in the buffer (but the extent is circular)
+
+# now create a line from your site to all streams, add more segments, and then cast to points
+  str.dist2 <- sf::st_nearest_points(s$geometry, d.crop) %>%
+    st_as_sf() %>% # these are the straight line distance from each point
+    rownames_to_column(var = "line_id") %>% # create unique ID code for each path
+    group_by(line_id) %>% 
+    dplyr::summarise(do_union = FALSE) %>% # not entirely sure if this step is necessary
+    mutate(distance = st_length(.)) #%>% # find the longest length away and drop
+
+  tmp.dist <- data.frame(bay_id = rep(unique(s$bay_id), nrow(str.dist2))) %>% 
+    cbind(., str.dist2) %>%
+    st_as_sf(crs = st_crs(str.dist2)) %>%
+    st_cast(to = "LINESTRING") %>%
+    dplyr::rename(geometry.1 = x) %>%
+    mutate(geometry = s$geometry)
+  
+  tmp.anad <- data.frame(bay_id = rep(unique(s$bay_id), nrow(d.crop))) %>%
+    cbind(., d.crop) %>%
+    st_as_sf(crs = st_crs(str.dist2)) %>%
+    dplyr::rename(geometry = x)
+  
+  straight.distance <- rbind(straight.distance, tmp.dist)
+    
+  manual.anad <- rbind(manual.anad, tmp.anad)
+  print(m)
+  }
+
+glimpse(straight.distance)
+glimpse(manual.anad)
+
+# combine the straight distance with the curved distance
+all.distance <- rbind(distance, straight.distance) %>%
+  st_drop_geometry() %>%
+  st_as_sf(crs = st_crs(distance))
+all.anad <- rbind(anad, manual.anad) # all anad streams
+all.sites <- rbind(distance, straight.distance) %>%
+  dplyr::select(c(bay_id, geometry)) %>%
+  distinct()
+
+```
+
+## Write out shp data
+For a subset of sites the pathroutr doesn't work because none of the line/points fall in the water from one another (e.g. the stream is in the next bay over) - I've given up and am going to manipulate the straight lines or lines manually because its been two weeks of this. 
+```{r}
+# read out the shapefiles for land, anadromous streams, linestring between sites, and sites and the manually calculated sites
+
+write_sf(all.distance, dsn = "Data/dist_anad_shapefiles/", layer = "sites_line_to_anad",
+         driver = "ESRI Shapefile")
+
+write_sf(all.anad, dsn = "Data/dist_anad_shapefiles/", layer = "nearest_anad_streams",
+         driver = "ESRI Shapefile")
+
+write_sf(pow, dsn = "Data/dist_anad_shapefiles/", layer = "pow_land", 
+         driver = "ESRI Shapefile")
+
+write_sf(all.sites, dsn = "Data/dist_anad_shapefiles/", layer = "unique_chp1_sites",
+         driver = "ESRI Shapefile")
+
+```
+
+Okay we manually pulled in the data in qGIS and moved the linestrings connecting the nearest anadromous streams off of land to represent the distance a fish would travel. I also verified that the R identified closest anadromous streams (which all were consistent except for the two Natzuhini sites which were moved to connect to a different stream - from AWC_CODE = 103-40-10260 to 103-40-10300) and Goats mouth inlet from AWC_CODE 103-40-10270 to 103-40-10420
+
+So now we're going to pull that data back in and represent this on graphs (for the supplement)
+# Pull in updated anad from qGIS
+```{r}
+updated.anad <- st_read(dsn = "Data/dist_anad_shapefiles/", layer = "updated_dist_anad_streams_2-23-24")
+```
+
+# calculated updated distance from anad
+```{r}
+updated.anad.dist <- updated.anad %>%
+  mutate(length_anad_m = st_length(geometry),
+         length_anad_km = length_anad_m/1000) %>%
+  arrange(length_anad_km) %>%
+  st_drop_geometry()
+
+#write.csv(updated.anad.dist, "Data/updated_dist_anad_km_2-23-24.csv")
+```
+
+# Create site maps (Supplemental figure 1)
+```{r}
+plot_list = list()
+
+plot_fxn <- function(siteID) {
+  ggplot() +
+    geom_sf({pow %>% st_crop(st_bbox(st_buffer((filter(sites.sf, bay_id == siteID)), dist = 5000)))}, 
+            mapping = aes(geometry = geometry), fill = "gray") +
+    geom_sf({d %>% st_crop(st_bbox(st_buffer((filter(sites.sf, bay_id == siteID)), dist = 5000)))}, 
+      mapping = aes(geometry = x), color = "blue") +
+    geom_sf({all.sites %>% filter(bay_id == siteID)}, mapping = aes(geometry = geometry), color = "green") +
+    geom_sf({updated.anad %>% filter(bay_id == siteID)}, mapping = aes(geometry = geometry), color = "pink") +
+    labs(subtitle = siteID) +
+    theme_bw() +
+    theme(axis.text.x= element_text(angle = 45))
+}
+
+
+for(i in unique(updated.anad.dist$bay_id)) {
+  plot_list[[i]] = plot_fxn(i)
+  print(i)
+}
+
+# this process takes awhile so don't run it unless necessary
+#grid.plot.anad <- gridExtra::grid.arrange(grobs = plot_list, ncol = 5)
+#grid.plot.anad
+
+#ggsave("distance_to_anad_2-23-24.png", plot = grid.plot.anad, width = 14, height = 16)
+```
+
+

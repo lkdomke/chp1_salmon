@@ -1,0 +1,10 @@
+"","Modnames","AICc","BIC","delta_aicc","delta_bic"
+"1","SALCHUM ~ juli_date + I(juli_date^2) + avg_density + sed2_avg",246.02,254.34,0,0
+"2","SALCHUM ~ juli_date + I(juli_date^2) + sed2_avg",249.18,256.77,3.16,2.42999999999998
+"3","SALCHUM ~ sed1_avg + juli_date + I(juli_date^2) + avg_density",249.87,258.2,3.84999999999999,3.85999999999999
+"4","SALCHUM ~ juli_date + I(juli_date^2) + sed1_avg",249.99,257.58,3.97,3.23999999999998
+"5","SALCHUM ~ juli_date + I(juli_date^2) + avg_density",251.1,258.69,5.07999999999998,4.34999999999999
+"6","SALCHUM ~ sed1_avg + avg_biom_site_gm2 + juli_date + I(juli_date^2) + avg_density",252.99,261.86,6.97,7.52000000000001
+"7","SALCHUM ~ sed1_avg + avg_biom_site_gm2 + juli_date + I(juli_date^2) + avg_density + dist_anad_km",254.76,263.96,8.73999999999998,9.61999999999998
+"8","SALCHUM ~ year + sed1_avg + avg_biom_site_gm2 + juli_date + I(juli_date^2) + avg_density + dist_anad_km",257.19,266.49,11.17,12.15
+"9","SALCHUM ~ juli_date + I(juli_date^2) + avg_density + avg_biom_site_gm2",390.14,397.73,144.12,143.39

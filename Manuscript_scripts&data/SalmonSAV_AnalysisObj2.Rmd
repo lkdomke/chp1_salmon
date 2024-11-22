@@ -1,0 +1,1452 @@
+---
+title: "Chum & Pink SAV use analysis objective 2"
+author: "Lia Domke"
+date: "11/23/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+Juvenile Chum and Pink Salmon use of submerged vegetative habitats in Southeast Alaska in Marine and Coastal Fisheries 
+
+Lia K Domke, Rebecca J Cates, Wendel W Raymond, Ginny L Eckert
+
+Specifically analyses related to **objective 2** in the manuscript
+
+1) Investigate variability in commercially important fish, specifically chum (O. keta) and pink (O. gorbuscha) abundance in the nearshore ecosystem and their potential environmental drivers. 
+
+
+H1: *Salmonid catch* by species is influenced by:
+- eelgrass biomass, density, and/or canopy height, 
+- distance from anadromous stream, time of year (Julian day), 
+- temperature, 
+- sea otter density, salinity, and 
+- qualitative sediment. 
+
+
+# Data
+```{r data include=FALSE}
+
+dat7 <- read.csv("Manuscript_scripts&data/salmon_env_2017-2019.csv", stringsAsFactors = F, header = T) # Salom w/ sed and updated anad distance to go via water 
+```
+
+# Libraries
+```{r libraries include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(corrgram)
+library(MuMIn) # might need to install 1.46.0
+library(AICcmodavg)
+library(lmtest)
+library(MASS)
+library(pscl)
+library(visreg)
+library(lubridate)
+library(patchwork)
+library(tidyr)
+```
+
+# Custom fxns
+## plot theme
+```{r theme settings, include=FALSE}
+# Creates custom base plot theme that can adjust every graph that you use plot_theme for!
+
+plot_theme <- function() {
+  theme_bw(base_size = 24, base_family = "Calibri") %+replace%
+    theme(panel.background  = element_blank(),
+            plot.background = element_rect(fill="transparent", colour=NA), 
+            legend.background = element_rect(fill="transparent", colour=NA),
+            legend.key = element_rect(fill="transparent", colour=NA),
+            panel.grid.major = element_blank(), 
+            panel.grid.minor = element_blank())
+}
+
+# to use ggsave and export plots include argument 'device=cario_pdf' e.g.: 
+# ggsave("name.pdf", device=cairo_pdf, width = 6, height = 6)
+```
+
+## global label fxn
+```{r adding global label}
+add_global_label <- function(pwobj, Xlab = NULL, Ylab = NULL, Xgap = 0.03, Ygap = 0.03, ...) {
+    ylabgrob <- patchwork::plot_spacer()
+    if (!is.null(Ylab)) {
+        ylabgrob <- ggplot() +
+            geom_text(aes(x = .5, y = .5), label = Ylab, parse = T,
+                      angle = 90, ...) +
+            theme_void()
+    }
+    if (!is.null(Xlab)) {
+        xlabgrob <- ggplot() +
+            geom_text(aes(x = .5, y = .5), label = Xlab, ...) +
+            theme_void()
+    }
+    if (!is.null(Ylab) & is.null(Xlab)) {
+        return((ylabgrob + patchworkGrob(pwobj)) + 
+            patchwork::plot_layout(widths = 100 * c(Ygap, 1 - Ygap)))
+    }
+    if (is.null(Ylab) & !is.null(Xlab)) {
+        return((ylabgrob + pwobj) + 
+            (xlabgrob) +
+            patchwork::plot_layout(heights = 100 * c(1 - Xgap, Xgap),
+                                   widths = c(0, 100),
+                                   design = "
+                                   AB
+                                   CC
+                                   "
+            ))
+    }
+    if (!is.null(Ylab) & !is.null(Xlab)) {
+        return((ylabgrob + pwobj) + 
+            (xlabgrob) +
+            patchwork::plot_layout(heights = 100 * c(1 - Xgap, Xgap),
+                                   widths = 100 * c(Ygap, 1 - Ygap),
+                                   design = "
+                                   AB
+                                   CC
+                                   "
+            ))
+    }
+    return(pwobj)
+}
+
+```
+
+
+# Exploratory Analaysis (EDA)
+Some basic visualizations to start to understand what the data looks like. 
+```{r}
+dat7_in <- dat7 %>%
+  filter(trans_type == "Inside")
+
+corrgram(dat7_in[,c(9,16,19,20,21,26:34,39,40, 44)], lower.panel = panel.shade,
+         upper.panel = panel.cor, diag.panel = panel.density)
+```
+
+Looking at the corrgram there is a lot going on. However, a few relationships stand out (i.e. pearson correlation greater than .6)
+
+- Positive correlation between shoot density and biomass (duh)
+
+UPDATE (2/26/24) also a strong (0.81) correlation between the two distance metrics
+
+**Correlations below .6**
+
+- year and salinity are positively correlated. 
+
+- year and shoot density have some positive correlation (0.39)
+
+- year and julian day are negatively correlated (likely because I only sampled in the early summer in 2019). 
+
+- temperature has a positive relationship with julian day (0.44) and a negative one with distance from anadromous stream
+
+- julian day appears has a positive correlation with seagrass biomass which makes sense because generally seagrass biomass/growth increases throughout the summer peaking in July. 
+
+- strangely enough, julian day and sed2_avg from the edge have a correlation of 0.55
+
+So **take aways** :
+
+- don't use seagrass biomass and shoot density in the same model (based on each other)
+- Might want to consider not including seagrass biom and julian day in the same model 
+- When you add in sediment, there are no major changes to these previous correlations
+
+# H1
+H1: *Salmonid catch* by species is influenced by:
+- eelgrass biomass, density, and/or canopy height,
+- distance from anadromous stream, 
+- time of year (Julian day), 
+- temperature, 
+- sea otter density, 
+- salinity, and 
+- qualitative sediment (recently added in and included in dat6 - has inside, outside, edge sed info). 
+
+Salmon catch will increase with eelgrass complexity, salinity and sea otter density. It will decrease with distance from anadromous stream, temperature, and julian day. There will not be a relationship between qualitative sediment and salmon abundance (Table 4 in outline). 
+
+```{r}
+str(dat7) # this has the updated distance from anadromous stream via water (length_anad_km)
+
+fish <- dat7 %>%
+  filter(trans_type == "Inside")
+  
+```
+
+Do this by species because they have  unique life history traits
+```{r}
+str(fish)
+
+library(corrgram)
+corrgram(fish[c(10, 5, 13, 20, 21, 27, 29, 31, 34:35, 40, 41, 44)], lower.panel=panel.shade,
+         upper.panel=panel.ellipse,
+         diag.panel=panel.density)
+# 10 - avg_density
+# 5 - year
+# 13 - dissolved O2 @ transect
+# 20 salinity ppt transect
+# 21 temp @ transect
+# 27 - juli date
+# 29 chum salmon abundance
+# 31 pink salmon abundance
+# 34 dist anad km (straight line distance)
+# 35 avg biom
+# 40 sed1_avg
+# 41 sed2_avg
+# 44 length_anad_km (updated version)
+
+par(mfrow=c(1,1))
+hist(fish$SALPINK) # looks heavily zero inflated 
+hist(log(fish$SALPINK + 1))
+hist(fish$SALPINK^(1/4))
+hist(sqrt(fish$SALPINK))
+# none of these transformations are really that great but the log is i guess *better*. 
+
+
+# for ease of model below - we're going to replace the dist_anad_km with length_anad_km, but call it by the old name
+fish <- fish %>% # we're over writting this purposely look above if you need to recreate the original fish df
+  dplyr::select(-dist_anad_km) %>% # remove straight line distance 
+  mutate(dist_anad_km = length_anad_km) %>%
+  dplyr::select(X:abundance, dist_anad_km, avg_biom_site_gm2:sed2_sd) # reorder it so its even in the same spot in case we did something silly using order instead of name below...
+```
+Interesting looks like theres a slightly negative relationship between sed1/sed2 and avg density. 
+
+# Chum salmon
+Adjusting data source to be in line with updated approach: 
+- remove non complete dataset (case -38)
+- change sea otter density to log-transformed
+- create seperate reduced data.frame w/o outliers (-16 and/or -29)
+```{r}
+chumdf <- fish %>%
+  mutate(avg_density = log(avg_density +0.1)) %>%
+  filter(!(is.na(avg_density)))
+
+chumdf.red <- chumdf[-c(16,29),]
+```
+
+## Tweedie approach
+Uses the gam framework so that the power parameter (p) can be estimated using the family tw() - if you used the glm approach you have to provide the p. 
+```{r}
+chum.full.tw <- gam(SALCHUM ~ year + sed1_avg + avg_biom_site_gm2 + juli_date + 
+                      I(juli_date^2) + avg_density + dist_anad_km, data = chumdf,
+                    family = tw(link = "log"), method = "ML")
+
+chum.full.twglm <- glm(SALCHUM ~ year + sed1_avg + avg_biom_site_gm2 + juli_date + 
+                      I(juli_date^2) + avg_density + dist_anad_km, data = chumdf,
+                    family = statmod::tweedie(link.power = 0, var.power = 1.537), maxit = 100)
+
+summary(chum.full.tw) # p = 1.537
+
+# drop year
+chum2.gam.tw <- gam(SALCHUM ~ sed1_avg + avg_biom_site_gm2 + juli_date + 
+                      I(juli_date^2) + avg_density + dist_anad_km, data = chumdf,
+                    family = tw(link = "log"), method = "ML")
+
+summary(chum2.gam.tw) # 1.548
+
+chum2.glm.tw <- glm(SALCHUM ~ sed1_avg + avg_biom_site_gm2 + juli_date + 
+                      I(juli_date^2) + avg_density + dist_anad_km, data = chumdf, 
+                    family = statmod::tweedie(link.power = 0, var.power = 1.548), 
+                    maxit = 100)
+
+
+# drop dist
+chum3.gam.tw <- gam(SALCHUM ~ sed1_avg + avg_biom_site_gm2 + juli_date + 
+                      I(juli_date^2) + avg_density, data = chumdf,
+                    family = tw(link = "log"), method = "ML")
+summary(chum3.gam.tw) # 1.567
+
+chum3.glm.tw <- glm(SALCHUM ~ sed1_avg + avg_biom_site_gm2 + juli_date + 
+                      I(juli_date^2) + avg_density, data = chumdf,
+                    family = statmod::tweedie(link.power = 0, var.power = 1.567), 
+                    maxit = 100)
+
+# drop avg biom
+chum4.gam.tw <- gam(SALCHUM ~ sed1_avg + juli_date + 
+                      I(juli_date^2) + avg_density, data = chumdf,
+                    family = tw(link = "log"), method = "ML")
+summary(chum4.gam.tw) # p = 1.568
+
+chum4.glm.tw <- glm(SALCHUM ~ sed1_avg + juli_date + 
+                      I(juli_date^2) + avg_density, data = chumdf,
+                    family = statmod::tweedie(link.power = 0, var.power = 1.568),
+                    maxit = 100)
+
+# drop sea otter density
+chum5.gam.tw <- gam(SALCHUM ~ juli_date + 
+                      I(juli_date^2) + sed1_avg, data = chumdf,
+                    family = tw(link = "log"), method = "ML")
+summary(chum5.gam.tw) # p = 1.571
+
+chum5.glm.tw <- glm(SALCHUM ~ juli_date + 
+                      I(juli_date^2) + sed1_avg, data = chumdf,
+                    family = statmod::tweedie(link.power = 0, var.power = 1.571))
+
+# what if we remove sed1
+chum6.gam.tw <- gam(SALCHUM ~ juli_date + I(juli_date^2) + avg_density, 
+    data = chumdf, family = tw(link = "log"), method = "ML")
+
+summary(chum6.gam.tw) # 1.594
+AICc(chum4.gam.tw); AICc(chum6.gam.tw) # not a huge increase
+
+chum6.glm.tw <- glm(SALCHUM ~ juli_date + I(juli_date^2) + avg_density, 
+    data = chumdf, family = statmod::tweedie(link.power = 0, var.power = 1.594))
+
+
+# add in sed2
+chum7.gam.tw <- gam(SALCHUM ~ juli_date + I(juli_date^2) + avg_density + 
+    sed2_avg, data = chumdf, family = tw(), method = "ML")
+
+summary(chum7.gam.tw)
+AICc(chum7.gam.tw); AICc(chum4.gam.tw) # sed2 looks a lot better
+
+chum7.glm.tw <- glm(SALCHUM ~ juli_date + I(juli_date^2) + avg_density + 
+    sed2_avg, data = chumdf, family = statmod::tweedie(link.power = 0, var.power = 1.593))
+
+# drop sea otter density
+chum8.gam.tw <- gam(SALCHUM ~ juli_date + I(juli_date^2) + sed2_avg, data = chumdf, 
+                    family = tw(), method = "ML")
+
+summary(chum8.gam.tw)
+AICc(chum8.gam.tw); AICc(chum7.gam.tw); AICc(chum4.gam.tw)
+
+chum8.glm.tw <- glm(SALCHUM ~ juli_date + I(juli_date^2) + sed2_avg, data = chumdf,
+                    family = statmod::tweedie(link.power = 0, var.power = 1.564))
+
+chum9.gam.tw <- gam(SALCHUM ~ juli_date + 
+                      I(juli_date^2) + avg_density + avg_biom_site_gm2, 
+                    data = chumdf,
+                    family = tw(link = "log"), method = "ML")
+summary(chum9.gam.tw)
+
+chum9.glm.tw <- glm(SALCHUM ~ juli_date + 
+                      I(juli_date^2) + avg_density + avg_biom_site_gm2, 
+                    data = chumdf, 
+                    family = statmod::tweedie(link.power=0, var.power = 1.588))
+
+AICc(chum.full.tw); AICc(chum2.gam.tw); AICc(chum3.gam.tw); AICc(chum4.gam.tw);
+AICc(chum5.gam.tw); AICc(chum6.gam.tw); AICc(chum7.gam.tw); AICc(chum8.gam.tw); 
+AICc(chum9.gam.tw) # lowest AICc is chum7.gam.tw
+
+gam.check(chum.full.tw) # hist residuals aren't great
+gam.check(chum2.gam.tw) # I dont love this
+gam.check(chum3.gam.tw)
+gam.check(chum4.gam.tw)
+gam.check(chum5.gam.tw) # not bad
+gam.check(chum6.gam.tw)
+gam.check(chum7.gam.tw) # not bad
+gam.check(chum8.gam.tw)
+gam.check(chum9.gam.tw) # terrible 
+
+# comparison of AIC with the AICtweedie
+tweedie::AICtweedie(chum.full.twglm); tweedie::AICtweedie(chum2.glm.tw); 
+tweedie::AICtweedie(chum3.glm.tw); tweedie::AICtweedie(chum4.glm.tw); 
+tweedie::AICtweedie(chum5.glm.tw); tweedie::AICtweedie(chum6.glm.tw);
+tweedie::AICtweedie(chum7.glm.tw); tweedie::AICtweedie(chum8.glm.tw);
+tweedie::AICtweedie(chum9.glm.tw)
+
+```
+
+## Candidate models (Supp Fig 4)
+```{r}
+cand.modtw.avg <- list()
+cand.modtw.avg[[1]] <- chum.full.tw
+cand.modtw.avg[[2]] <- chum2.gam.tw
+cand.modtw.avg[[3]] <- chum3.gam.tw
+cand.modtw.avg[[4]] <- chum4.gam.tw
+cand.modtw.avg[[5]] <- chum5.gam.tw
+cand.modtw.avg[[6]] <- chum6.gam.tw
+cand.modtw.avg[[7]] <- chum7.gam.tw
+cand.modtw.avg[[8]] <- chum8.gam.tw
+cand.modtw.avg[[9]] <- chum9.gam.tw
+
+cand.glm.tw<- list()
+cand.glm.tw[[1]] <- chum.full.twglm
+cand.glm.tw[[2]] <- chum2.glm.tw
+cand.glm.tw[[3]] <- chum3.glm.tw
+cand.glm.tw[[4]] <- chum4.glm.tw
+cand.glm.tw[[5]] <- chum5.glm.tw
+cand.glm.tw[[6]] <- chum6.glm.tw
+cand.glm.tw[[7]] <- chum7.glm.tw
+cand.glm.tw[[8]] <- chum8.glm.tw
+cand.glm.tw[[9]] <- chum9.glm.tw
+
+
+canditat.fxn <- function(fitted.model) {
+  AICc <- AICc(fitted.model)
+  BIC <- BIC(fitted.model)
+  Modname <- paste(c(formula(fitted.model)))
+  print(data.frame("Modnames" = Modname, AICc, BIC))
+}
+
+chum.candidate.table <- canditat.fxn(fitted.model = chum.full.tw) %>%
+  rbind(canditat.fxn(chum2.gam.tw)) %>%
+  rbind(canditat.fxn(chum3.gam.tw)) %>%
+  rbind(canditat.fxn(chum4.gam.tw)) %>%
+  rbind(canditat.fxn(chum5.gam.tw)) %>%
+  rbind(canditat.fxn(chum6.gam.tw)) %>%
+  rbind(canditat.fxn(chum7.gam.tw)) %>%
+  rbind(canditat.fxn(chum8.gam.tw)) %>%
+  rbind(canditat.fxn(chum9.gam.tw)) %>%
+  as.data.frame() %>%
+  mutate_if(is.numeric, round, digits = 2) %>%
+  arrange(., AICc) %>%
+  mutate(delta_aicc = AICc - min(AICc),
+         delta_bic = BIC - min(BIC))
+
+canditat.fxn <- function(fitted.model) {
+  AICc <- tweedie::AICtweedie(fitted.model)
+  Modname <- paste(c(formula(fitted.model)))
+  print(data.frame("Modnames" = Modname, AIC))
+}
+
+chum.candidate.table <- canditat.fxn(fitted.model = chum.full.twglm) %>%
+  rbind(canditat.fxn(chum2.glm.tw)) %>%
+  rbind(canditat.fxn(chum3.glm.tw)) %>%
+  rbind(canditat.fxn(chum4.glm.tw)) %>%
+  rbind(canditat.fxn(chum5.glm.tw)) %>%
+  rbind(canditat.fxn(chum6.glm.tw)) %>%
+  rbind(canditat.fxn(chum7.glm.tw)) %>%
+  rbind(canditat.fxn(chum8.glm.tw)) %>%
+  rbind(canditat.fxn(chum9.glm.tw)) %>%
+  as.data.frame() %>%
+  mutate_if(is.numeric, round, digits = 2) %>%
+  arrange(., AICc) %>%
+  mutate(delta_aicc = AICc - min(AICc),
+         delta_bic = BIC - min(BIC))
+
+# okay usin the AIC tweedie gets the same result in terms of model selection 
+# makes sense that its slightly different Given that one is calculating AIC and the other is AICc. 
+
+#write.csv(chum.candidate.table, "Manuscript_scripts&data/Figures&Tables/Obj2_chum_candidateTable.csv")
+```
+
+## GLM w/ negbin
+```{r}
+str(fish)
+
+corrgram(fish[c(10, 5, 13, 20, 21, 27, 29, 34:35, 40, 41)], lower.panel=panel.shade, upper.panel=panel.ellipse,
+         diag.panel=panel.density)
+# 10 - avg_density
+# 5 - year
+# 13 - dissolved O2 @ transect
+# 20 salinity ppt transect
+# 21 temp @ transect
+# 27 - juli date
+# 29 chum salmon abundance
+# 34 dist anad
+# 35 avg biom
+# 40 sed1_avg
+# 41 sed2_avg
+
+par(mfrow=c(2,2))
+hist(fish$SALCHUM) # looks heavily zero inflated 
+hist(log(fish$SALCHUM + 1))
+hist(fish$SALCHUM^(1/4))
+hist(sqrt(fish$SALCHUM))
+# none of these transformations are really that great but the forth root is i guess *better*.
+# okay so using a lm approach doesn't seem like a good idea... 
+```
+
+Start with a full model and interaction (old done with glm.nb)
+```{r}
+# first create a full model based on the intx you would expect and what predictors you expect would be important for pink salmon
+
+# included an interaction between year and date and potentially eelgrass biomass and then also with sediment.. 
+chum.intx <- glm.nb(SALCHUM ~ year * sed1_avg * avg_biom_site_gm2 * 
+                      juli_date + 
+                      I(juli_date^2) + avg_density + dist_anad_km, 
+                    data = chumdf,
+                    control=glm.control(maxit = 10000), init.theta = 0.585)
+
+summary(chum.intx)
+# Okay theres a few interactions that might be sig lets drop the avg_biom first
+chum.intx2 <- glm.nb(SALCHUM ~ year * sed1_avg * juli_date + 
+                      I(juli_date^2)+ avg_density + avg_biom_site_gm2 +
+                       dist_anad_km, 
+                     data = chumdf, 
+                     control=glm.control(maxit = 100), init.theta = 0.585)
+
+summary(chum.intx2)
+
+anova(chum.intx, chum.intx2, test = "Chisq") # can we use it to test including interactions like this? Well if we can then including avg_biom does not significantly improve the model. 
+
+# okay so now theres no significant interaction so lets remove intx
+```
+
+Create a full model without intx (old done with glm.nb)
+```{r}
+chum.full.mod <- glm.nb(SALCHUM ~ year + sed1_avg + avg_biom_site_gm2 +
+                          juli_date + 
+                      I(juli_date^2) + avg_density + dist_anad_km, 
+                      data = chumdf,
+                    control=glm.control(maxit = 10000), init.theta = 0.495)
+
+summary(chum.full.mod)
+anova(chum.full.mod, chum.intx, test = "Chisq") # okay if this is a valid way of testing this its better to include the parameters w.o intx
+AICc(chum.full.mod);AICc(chum.intx) # yea. 
+
+chum.mod2 <- glm.nb(SALCHUM ~ sed1_avg + avg_biom_site_gm2 + juli_date +
+                      
+                      I(juli_date^2) + avg_density + dist_anad_km, 
+                    data = chumdf,
+                    control=glm.control(maxit = 1000), init.theta = 0.495)
+
+summary(chum.mod2)
+
+anova(chum.full.mod, chum.mod2, test = "Chisq") # year doesn't significantly to the model
+
+chum.mod3 <- glm.nb(SALCHUM ~ sed1_avg + avg_biom_site_gm2 + juli_date + 
+                      I(juli_date^2) + avg_density, 
+                    data = chumdf,
+                    control=glm.control(maxit = 100), init.theta = 0.495)
+
+summary(chum.mod3)
+anova(chum.mod2, chum.mod3, test = "Chisq") # dist anad stream does not contribute
+AICc(chum.mod2); AICc(chum.mod3) # slight reduction of aic by droping anad
+
+chum.mod4 <- glm.nb(SALCHUM ~ sed1_avg + juli_date + 
+                      I(juli_date^2) + avg_density, 
+                    data = chumdf,
+                    control=glm.control(maxit = 100), 
+                    init.theta = 0.495)
+
+summary(chum.mod4)
+anova(chum.mod3, chum.mod4, test = "Chisq") # avg biomass doesn't reduce model
+
+chum.mod5 <- glm.nb(SALCHUM ~ juli_date + I(juli_date^2) + 
+                      avg_density, 
+                    data = chumdf,
+                    control = glm.control(maxit = 100), init.theta = 0.495)
+summary(chum.mod5)
+anova(chum.mod4, chum.mod5, test = "Chisq") # sed1_avg doesn't contrib
+
+# lets try including sed2
+chum.mod6 <- glm.nb(SALCHUM ~ juli_date + I(juli_date^2) + 
+                      avg_density + sed2_avg, 
+                    data = chumdf, 
+                    control = glm.control(maxit = 100), 
+                    init.theta = 0.495)
+
+summary(chum.mod6)
+chum.mod6.gam <- gam(SALCHUM ~ juli_date + I(juli_date^2) + 
+                      avg_density + sed2_avg, 
+                    data = chumdf, 
+                    family = nb())
+
+summary(chum.mod6)
+
+anova(chum.mod6, chum.mod5, test = "Chisq") # does not sig contrib sed2_avg
+
+chum.mod7 <- glm.nb(SALCHUM ~ juli_date + I(juli_date^2), 
+                    data = chumdf, 
+                    control = glm.control(maxit = 100), 
+                    init.theta = 0.495)
+
+summary(chum.mod7)
+anova(chum.mod5, chum.mod7, test = "Chisq") # average density sig contribs to model
+# so keep dates and avg density
+AICc(chum.mod7);AICc(chum.mod6);AICc(chum.mod5);AICc(chum.mod4)
+
+
+
+AICc(chum.full.mod); AICc(chum.mod2); AICc(chum.mod3); AICc(chum.mod4); AICc(chum.mod5); AICc(chum.mod6);AICc(chum.mod7)
+# chum models that include juli date + juli date ^2 + avg_density (and one with sed2) are pretty similar looking at AICc values
+# Because of the ideas of parsimony - lets go with the smaller model (chum.mod5)
+
+# check out the fit
+par(mfrow = c(2,2))
+plot(chum.mod5, which = 1:4) # some concavity in the QQ plot, and potentially an increase in residuals across the predicted values. 
+chumdf[6,] # one potential outlier at 6 = guktu bay where 1 chum was caught
+chumdf[25,] # overlier where 128 chum where caught
+```
+### Candidate model table
+```{r}
+library(AICcmodavg) # redo this so that it uses AICc from AICcmodavg
+cand.models <- list() # create an empty list to include all the candidate models
+cand.models[[1]] <- chum.full.mod # add in  models one at a time
+cand.models[[2]] <- chum.intx
+cand.models[[3]] <- chum.intx2
+cand.models[[4]] <- chum.mod2
+cand.models[[5]] <- chum.mod3
+cand.models[[6]] <- chum.mod4
+cand.models[[7]] <- chum.mod5
+cand.models[[8]] <- chum.mod6
+cand.models[[9]] <- chum.mod7
+
+# create vector with "model names" in this case, I'm including the formulas from each model (so I know whats in each one!)
+Modnames <- paste (c(formula(chum.full.mod), formula(chum.intx), formula(chum.intx2), formula(chum.mod2), formula(chum.mod3), formula(chum.mod4), formula(chum.mod5), formula(chum.mod6), formula(chum.mod7)))
+
+# calculate AICc, delta AICc, and AICcw using candidate models above each named
+chum.cand.tbl.aic <- aictab(cand.set = cand.models, modnames = Modnames, sort = TRUE, second.ord=T)
+chum.cand.tbl.bic <- bictab(cand.set = cand.models, modnames = Modnames, sort = T)
+
+# round values to 2 decimal places
+chum.cand.tbl <- chum.cand.tbl.aic %>%
+  as.data.frame() %>%
+  left_join(chum.cand.tbl.bic, by = c("Modnames", "K")) %>%
+  as.data.frame() %>%
+  mutate_if(is.numeric, round, digits = 2) %>%
+  dplyr::select(c(Modnames, K, AICc, Delta_AICc, AICcWt, BIC, Delta_BIC, BICWt))
+
+
+colnames(chum.cand.tbl)[2] <- ("df") # rename column 2 (K) as df
+
+chum.cand.tbl
+
+#write.csv(chum.cand.tbl, file = "Data/Chum_candidate_mod_tbl_2-26-24.csv")
+
+# Chi square test of full model (w/o intx) and best fitted model
+anova(chum.full.mod, chum.mod5, test="Chisq")
+summary(chum.mod5)
+```
+
+
+
+
+
+## Zero infl w best model
+check if zero inf does a better job
+```{r}
+#chum.zeroinf <- zeroinfl(SALCHUM ~ juli_date + I(juli_date^2) + avg_density + 
+#                           sed2_avg, 
+#                         data = chumdf, dist = "negbin",
+#                         link = "log")
+# okay so this doesn't fit meaning its likely doesn't have a sloped likelihood field and not informative so yea maybe not the choice
+
+#summary(chum.zeroinf)
+
+#AICc(chum.zeroinf); AICc(chum.mod5)
+```
+
+## Best fit model 
+```{r}
+#gam(SALCHUM ~ juli_date + I(juli_date^2) + avg_density + 
+#    sed2_avg, data = chumdf, family = tw(), method = "ML")
+# reminder of the best model 
+
+summary(chum7.gam.tw) # p = 1.543
+
+# uses p estimate from the gam framework
+chum.glm.tw <- glm(SALCHUM ~ juli_date + I(juli_date^2) + 
+    avg_density + sed2_avg, data = chumdf, family = statmod::tweedie(link.power = 0, var.power = 1.543), maxit = 100)
+
+
+tweedie::AICtweedie(chum.glm.tw); AICc(chum7.gam.tw)
+```
+
+
+### Visualizing best model - visreg (Figure 4)
+```{r}
+visreg(chum7.gam.tw, scale = "response")
+
+chum1.tw <- visreg(chum7.gam.tw, "juli_date", 
+       scale = "response", gg = TRUE, rug = F, partial = F,
+       line.par = list(col = 'black')) + 
+  xlab(expression(paste("Day of year"))) + 
+  ylab(NULL) +
+  coord_cartesian(ylim = c(0,150)) +
+  geom_point(data = chumdf, aes(x = juli_date, y = SALCHUM)) + 
+  plot_theme()
+
+
+chum2.tw <- visreg(chum7.gam.tw, "avg_density", 
+                scale = "response", gg = TRUE, rug = F, 
+                line.par = list(col = "black")) +
+  xlab(expression(paste("Log-transformed sea otter density (no. ",km^-2,")"))) + 
+  ylab(NULL) +
+  coord_cartesian(ylim = c(0,150)) +
+    geom_point(data = chumdf, aes(x = avg_density, y = SALCHUM)) + 
+  plot_theme()
+
+chum3.tw <- visreg(chum7.gam.tw, "sed2_avg", 
+                scale = "response", gg = TRUE, rug = F, 
+                line.par = list(col = "black")) +
+  xlab(expression(paste("Secondary sediment grain size score"))) + 
+  ylab(NULL) + coord_cartesian(ylim = c(0,150)) +
+    geom_point(data = chumdf, aes(x = sed2_avg, y = SALCHUM)) + 
+  plot_theme()
+
+
+library(patchwork)
+chums.visreg.tw <- (chum1.tw + chum2.tw) /
+  (chum3.tw + plot_spacer()) + plot_annotation(tag_levels = "a")
+
+chum.plot.tw <- add_global_label(chums.visreg.tw, 
+                              Ylab = "Chum~Salmon~'('*no.~seine^-1*')'",
+                 size = 8.25)
+
+```
+
+# 'Predict' best model
+Just compare with tomake sure visreg is doing the right thing
+```{r}
+# predict over julian day and hold everything else at a median value
+newdata.j <- data.frame(juli_date = seq(min(chumdf$juli_date), max(chumdf$juli_date)),
+                        juli_date2 = ((seq(min(chumdf$juli_date),
+                                           max(chumdf$juli_date)))^2),
+                        avg_density = rep(median(chumdf$avg_density, na.rm = T), 130),
+                        sed2_avg = rep(median(chumdf$sed2_avg), 130),
+                        sed1_avg = rep(median(chumdf$sed1_avg), 130))
+# add in julian day predictions to data frame
+pred.j <- predict(chum7.gam.tw, se.fit =TRUE, type = "response", newdata = newdata.j)
+newdata.j$predict <- pred.j$fit
+newdata.j$lwr <- pred.j$fit - (1.96*pred.j$se.fit)
+newdata.j$upr <- pred.j$fit + (1.96*pred.j$se.fit)
+
+# predict over sea otter density
+newdata.so <- data.frame(juli_date = rep(median(chumdf$juli_date), 100),
+                         juli_date2 = rep(median(chumdf$juli_date^2), 100),
+                         avg_density = seq(min(chumdf$avg_density, na.rm = T), max(chumdf$avg_density, na.rm = T), length.out = 100),
+                         sed2_avg = rep(median(chumdf$sed2_avg), 100),
+                         sed1_avg = rep(median(chumdf$sed1_avg), 100))
+pred.so <- predict(chum7.gam.tw, se.fit = TRUE, type = "response", newdata=newdata.so)
+newdata.so$predict <- pred.so$fit
+newdata.so$lwr <- pred.so$fit - (1.96*pred.so$se.fit)
+newdata.so$upr <- pred.so$fit + (1.96*pred.so$se.fit)
+
+# predict over secondary average sed scores
+newdata.sed2 <- data.frame(juli_date = rep(median(chumdf$juli_date), 100),
+                         juli_date2 = rep(median(chumdf$juli_date^2), 100),
+                         avg_density = rep(median(chumdf$avg_density, na.rm = T), 100),
+                         sed2_avg = seq(min(chumdf$sed2_avg), max(chumdf$sed2_avg), length.out = 100),
+                         sed1_avg = rep(median(chumdf$sed1_avg), 100))
+
+pred.sed2 <- predict(chum7.gam.tw, se.fit = TRUE, type = "response", newdata=newdata.sed2)
+newdata.sed2$predict <- pred.sed2$fit
+newdata.sed2$lwr <- pred.sed2$fit - (1.96*pred.sed2$se.fit)
+newdata.sed2$upr <- pred.sed2$fit + (1.96*pred.sed2$se.fit)
+
+```
+
+## Plot bestfit predicted models
+```{r, out.height = 50%}
+p.jday <- ggplot(newdata.j) +
+  geom_line(aes(x = juli_date, y = predict)) +
+  geom_ribbon(aes(x = juli_date, ymin = lwr, ymax = upr), alpha = 0.2) +
+  geom_point(data = chumdf, aes(x = juli_date, y  = SALCHUM)) +
+  coord_cartesian(ylim = c(0,150)) +
+  ylab(NULL) +
+  xlab("Day of year") +
+  plot_theme()
+
+
+
+p.so <- ggplot(newdata.so) +
+  geom_line(aes(x = avg_density, y = predict)) +
+  geom_ribbon(aes(x = avg_density, ymin = lwr, ymax = upr), alpha = 0.2) +
+  geom_point(data = chumdf, aes(x = avg_density, y  = SALCHUM)) +
+  xlab(expression(paste("Log-transformed sea otter density (no. ",km^-2,")"))) + 
+  ylab(NULL) +
+  coord_cartesian(ylim = c(0,150)) + 
+  plot_theme()
+
+
+
+p.sed2 <- ggplot(newdata.sed2) + 
+  geom_line(aes(x = sed2_avg, y = predict)) +
+  geom_ribbon(aes(x = sed2_avg, ymin = lwr, ymax = upr), alpha = 0.2) +
+  geom_point(data = chumdf, aes(x = sed2_avg, y  = SALCHUM)) +
+  xlab("Secondary sediment grain size score") + 
+  ylab(NULL) +
+  coord_cartesian(ylim = c(0,150)) +
+  plot_theme()
+
+
+
+chums.pred.plots <- p.jday + p.so + p.sed2 + plot_spacer() +
+  plot_annotation(tag_levels = "a") + plot_layout(nrow = 2)
+
+chum.plot.pred <- add_global_label(chums.pred.plots, 
+                              Ylab = "Chum~Salmon~'('*no.~seine^-1*')'",
+                 size = 8.25)
+
+#ggsave("Manuscript_scripts&data/Figures&Tables/Obj2chum_predictions.jpg", plot = chum.plot.pred,  width = 14, height = 10)
+```
+
+
+
+## Model averaging (old)
+
+
+```{r}
+AIC(chum.full.mod); AIC(chum.mod2); AIC(chum.mod3); AIC(chum.mod4); AIC(chum.mod5); AIC(chum.mod6); AIC(chum.mod7)
+# lowest AIC values include chum.mod4, chum.mod5, chum.mod6 that are less than <2 AIC a part (Burnham and Anderson 2002 recommendation in Raymond et al., 2021)
+cand.model.avg <- list()
+cand.model.avg[[1]] <- chum.mod4
+cand.model.avg[[2]] <- chum.mod5
+cand.model.avg[[3]] <- chum.mod6
+
+
+summary(chum.mod4)
+summary(chum.mod6)
+# right now this R isn't as updated as it could be, to install MuMIN
+# remotes::install_version("MuMIn", "1.46.0")
+library(MuMIn)
+avg.models <- model.avg(cand.model.avg, fit = TRUE)
+summary(avg.models)
+
+plot(avg.models)
+# okay to pull out the nicer looking model averaged coefficients:
+mA <- summary(avg.models)
+df1 <- as.data.frame(mA$coefmat.full) %>%
+  tibble::rownames_to_column(var = "coefficient")
+
+model.coeff.plot <- ggplot(data=df1[2:6,], aes(x=coefficient, y=Estimate))+ #excluding intercept because estimates so much larger
+      geom_hline(yintercept=0, color = "red",linetype="dashed", lwd=1.5)+ #add dashed line at zero
+      geom_errorbar(aes(ymin=Estimate-`Adjusted SE`, ymax=Estimate+`Adjusted SE`), colour="blue", #adj SE
+                  width=0, lwd=1.5, alpha = 0.7) +
+      coord_flip()+ # flipping x and y axes
+      geom_point(size=8)+theme_classic(base_size = 20)+ ylab("Coefficient")
+
+# lets pull the information we'll need to create a table 
+sw <- avg.models$sw
+coeff <- df1[2:6,c(1:3, 6)]
+
+model.tbl <- cbind(coeff, sw) %>%
+  mutate(`N containing models` = c(3, 3, 3, 1, 1)) %>%
+  mutate_if(is.numeric, round, digits = 3)
+
+#write.csv(model.tbl, "Image/chum_model_averaged_coeff.csv")
+```
+
+
+# Pink salmon
+## GLM w/ neg bin
+
+Adjusting data source to be in line with updated approach: 
+- remove non complete dataset (case -38)
+- change sea otter density to log-transformed
+- create seperate reduced data.frame w/o outliers (-16 and/or -29)
+```{r}
+pinkdf <- fish %>%
+  mutate(avg_density = log(avg_density +0.1)) %>%
+  filter(!(is.na(avg_density)))
+
+pinkdf.red <- pinkdf[-c(16,29),]
+```
+
+
+```{r}
+# first create a full model based on the intx you would expect and what predictors you expect would be important for pink salmon
+
+# included an interaction between year and date and potentially eelgrass biomass and then also with sediment.. 
+pink.intx <- glm.nb(SALPINK ~ year * sed1_avg * avg_biom_site_gm2 * 
+                      juli_date + 
+                      I(juli_date^2)+ avg_density + dist_anad_km, 
+                    data = pinkdf, 
+                    control=glm.control(maxit = 100), 
+                    init.theta = 0.552)
+
+summary(pink.intx)
+
+# refit the model dropping two potentially influential outliers (16 and 29 - SFE and SLB)
+pink.intx.red <- glm.nb(SALPINK ~ year * sed1_avg * avg_biom_site_gm2 *
+                          juli_date + 
+                      I(juli_date^2)+ avg_density + 
+                        dist_anad_km, 
+                      data = pinkdf.red,
+                    control=glm.control(maxit = 100), init.theta = 0.495)
+
+summary(pink.intx.red)
+```
+
+Interaction doesn't appear to be significant, remove intx and then create full model 
+```{r}
+# including julian + quadrat of julian day to allow for increase, peak, and decline. 
+pink.full.mod <- glm.nb(SALPINK ~ year + juli_date + I(juli_date^2) +
+                          avg_biom_site_gm2 + avg_density + 
+                          dist_anad_km + sed1_avg, 
+                        data = pinkdf, 
+                        control=glm.control(maxit = 100), 
+                        init.theta = 0.495)
+
+summary(pink.full.mod)
+par(mfrow=c(2,2), mar = c(2,2,2,2))
+plot(pink.full.mod)
+
+# remove a couple of the non significant parameters i.e. in this case year
+pink.mod1 <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + 
+                      avg_biom_site_gm2 + avg_density + 
+                      dist_anad_km + sed1_avg, 
+                    data = pinkdf, 
+                    control=glm.control(maxit = 100), 
+                    init.theta = 0.495)
+
+summary(pink.mod1)
+anova(pink.full.mod, pink.mod1, test = "Chisq")
+# the addition of year does not significantly contribute to the full model. 
+
+
+# lets also drop sed1_avg and maybe instead include sed2_avg (dont include together cause their highly correlated -- makes sense)
+# first drop sed1
+pink.mod2 <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + 
+                      avg_biom_site_gm2 + avg_density + 
+                      dist_anad_km, data = pinkdf, 
+                    control=glm.control(maxit = 100))
+
+# init.theta = 0.406
+summary(pink.mod2)
+
+# sub model removing all sediment and sea otter densiy
+pink.mod2.2 <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) +
+                        avg_biom_site_gm2 + dist_anad_km, 
+                      data = pinkdf, 
+                      control=glm.control(maxit = 100), 
+                      init.theta = 0.495)
+
+anova(pink.mod2, pink.mod2.2) # just checking to make sure that they should be included (sea otter density, YES)
+
+# add sed 2 and compare with pink.mod2 jic
+pink.mod3 <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + 
+                      avg_biom_site_gm2 + avg_density + 
+                      dist_anad_km + sed2_avg, 
+                    data = pinkdf, control=glm.control(maxit = 100), 
+                    init.theta = 0.495)
+
+summary(pink.mod3) #looks like it spreads out some of the variance? 
+anova(pink.mod2, pink.mod3) # sed2 does not sig contribute to the model, parsimony rains here
+
+#AICc(pink.intx); BEST model includes the sediment 2 
+AICc(pink.full.mod);AICc(pink.mod1);AICc(pink.mod2);AICc(pink.mod2.2); AICc(pink.mod3)
+```
+
+### refitting w/o pot outliers
+```{r}
+# refit w.o pot outliers 
+pink.full.mod.red <- glm.nb(SALPINK ~ year + juli_date + 
+                              I(juli_date^2) + avg_biom_site_gm2 +
+                              avg_density + dist_anad_km + 
+                              sed1_avg, 
+                            data = pinkdf.red, 
+                            control=glm.control(maxit = 100), 
+                            init.theta = 0.495)
+
+summary(pink.full.mod.red)
+
+
+# refit w/o pot outliers
+pink.mod1.red <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) +
+                          avg_biom_site_gm2 + avg_density + 
+                          dist_anad_km + sed1_avg, 
+                        data = pinkdf.red, 
+                        control=glm.control(maxit = 100), 
+                        init.theta = 0.495)
+
+summary(pink.mod1.red)
+anova(pink.full.mod.red, pink.mod1.red, test = "Chisq") # pref for reduced model 
+plot(pink.mod1.red)
+
+########### outlier removal
+# first drop sed1 cCHANGES REMOVING INIT.THETA =0.495
+pink.mod2.red <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) +
+                          avg_biom_site_gm2 + avg_density + 
+                          dist_anad_km, 
+                        data = pinkdf.red, 
+                        control=glm.control(maxit = 100))
+
+summary(pink.mod2.red)
+anova(pink.mod2.red, pink.mod1.red)
+
+pink.mod2.2.red <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) +
+                            avg_biom_site_gm2 + 
+                            dist_anad_km, 
+                          data = pinkdf.red, 
+                          control=glm.control(maxit = 100), 
+                          init.theta = 0.495)
+summary(pink.mod2.2.red)
+
+########## does sed 2 get included in the outlier model 
+pink.mod3.red <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) +
+                          avg_biom_site_gm2 + avg_density + 
+                          dist_anad_km + sed2_avg, 
+                        data = pinkdf.red, 
+                        control=glm.control(maxit = 100), 
+                        init.theta = 0.495)
+
+summary(pink.mod3.red)
+anova(pink.mod2.red, pink.mod3.red) # sed2 does not sig contribute to the model
+
+pink.mod4.red <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) +
+                          avg_biom_site_gm2 + avg_density + 
+                          sed2_avg, 
+                        data = pinkdf.red, 
+                        control=glm.control(maxit = 100), 
+                        init.theta = 0.495)
+summary(pink.mod4.red)
+
+pink.mod5.red <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) +
+                          avg_biom_site_gm2 + avg_density, 
+                        data = pinkdf.red, 
+                        control=glm.control(maxit = 100), 
+                        init.theta = 0.495)
+summary(pink.mod5.red)
+##############
+
+
+#AICc(pink.intx.red); BEST MODEL for the reduced outliers is 162
+AICc(pink.full.mod.red);AICc(pink.mod1.red);AICc(pink.mod2.red);AICc(pink.mod3.red); AICc(pink.mod4.red); AICc(pink.mod5.red) # best model ends up dropping sediment 1/2 and distance from anadromous stream. 
+
+plot(DHARMa::simulateResiduals(pink.mod2))
+plot(DHARMa::simulateResiduals(pink.mod5.red))
+```
+
+
+```{r}
+# lowest AICc value includse three models-- model that includes date, avg biom, avg so density, and distance. (plus the other top two that include sedimen scores)
+par(mfrow=c(2,3))
+visreg(pink.mod2, scale = "response")
+
+# how's the model fit for pink.mod2?
+par(mfrow=c(2,2))
+plot(pink.mod2, which = 1:4)
+
+# case numbers 37 and 16 seem to be potential outliers in the data. in particular 16
+fish[16,] # south fish egg (has really high eelgrass densities), high pink numbers
+fish[37,] # salt lake bay, low pink numbers
+
+# what if you removed those case numbers? 
+pink.mod2.red <- glm.nb(SALPINK ~ juli_date + I(juli_date^2) + avg_biom_site_gm2 + avg_density + dist_anad_km, data = fish[-c(16,37),], control=glm.control(maxit = 100))
+
+summary(pink.mod2.red)
+plot(pink.mod2.red, which = 1:4)
+
+AICc(pink.mod2.red);AICc(pink.mod2) # are these really comparable if theres not the same degrees of freedom. 
+```
+
+## zero infl w best model
+```{r}
+pink.zeroinf <- zeroinfl(SALPINK ~ juli_date + I(juli_date^2) +
+                           avg_biom_site_gm2 + avg_density + dist_anad_km, 
+                         data = fish, dist = "negbin",
+                         link = "log")
+# okay so this doesn't fit meaning its likely doesn't have a sloped likelihood field and not informative so yea maybe not the choice
+
+summary(pink.zeroinf)
+
+AICc(pink.zeroinf); AICc(pink.mod2)
+
+summary(pink.mod2)
+```
+
+
+## Candidate model table (Supp Table 5)
+```{r}
+cand.models <- list() # create an empty list to include all the candidate models
+cand.models[[1]] <- pink.full.mod # add in  models one at a time
+cand.models[[2]] <- pink.intx
+cand.models[[3]] <- pink.mod1
+cand.models[[4]] <- pink.mod2
+cand.models[[5]] <- pink.mod2.2
+cand.models[[6]] <- pink.mod3
+#cand.models[[7]] <- pink.mod2.red # this model has the same parameters as pink.mod2 but it also drops a few sites that are potentially influential case numbers. 
+
+
+# create vector with "model names" in this case, I'm including the formulas from each model (so I know whats in each one!)
+Modnames <- paste (c(formula(pink.full.mod), formula(pink.intx), formula(pink.mod1), formula(pink.mod2), formula(pink.mod2.2), formula(pink.mod3)))
+
+# calculate AICc, delta AICc, and AICcw using candidate models above each named
+pink.cand.tbl.aic <- aictab(cand.set = cand.models, modnames = Modnames, sort = TRUE, second.ord = T)
+pink.cand.tbl.bic <- bictab(cand.set = cand.models, modnames = Modnames, sort = TRUE)
+
+# round values to 2 decimal places
+pink.cand.tbl <- pink.cand.tbl.aic %>%
+  as.data.frame() %>%
+  left_join(pink.cand.tbl.bic, by = c("Modnames", "K")) %>%
+  as.data.frame() %>%
+  mutate_if(is.numeric, round, digits = 2) %>%
+  dplyr::select(c(Modnames, K, AICc, Delta_AICc, AICcWt, BIC, Delta_BIC, BICWt))
+
+colnames(pink.cand.tbl)[2] <- ("df") # rename column 2 (K) as df
+
+pink.cand.tbl
+# okay just as a note AIC only values gets to the same result as using LRTT testing
+
+#write.csv(pink.cand.tbl, file = "Manuscript_scripts&data/Figures&Tables/Obj2_pink_candidateTable.csv")
+```
+
+### Model Avg pink (Supp Table 4)
+```{r}
+AICc(pink.mod2); AICc(pink.mod3); AICc(pink.mod1)
+performance::check_overdispersion(pink.mod2)
+performance::check_overdispersion(pink.mod3)
+performance::check_overdispersion(pink.mod1)
+
+cand.avg <- list()
+cand.avg[[1]] <- pink.mod2
+cand.avg[[2]] <- pink.mod3
+cand.avg[[3]] <- pink.mod1
+
+library(MuMIn)
+pink.avg<- model.avg(cand.avg)
+summary(pink.avg)
+```
+
+```{r}
+mA.pink <- summary(pink.avg)
+df1 <- as.data.frame(mA.pink$coefmat.full) %>%
+  tibble::rownames_to_column(var = "coefficient") 
+
+df1[1,1] <- "Intercept"
+df1[2,1] <- "Day of year"
+df1[3,1] <- "Squared day of year"
+df1[4,1] <- "Eelgrass biomass"
+df1[5,1] <- "Log-transformed sea otter density"
+df1[6,1] <- "Distance from anadromous stream"
+df1[7,1] <- "Secondary sediment grain size"
+df1[8,1] <- "Primary sediment grain size"
+
+model.coeff.plot <- ggplot(data=df1[-1,], aes(x=coefficient, y=Estimate))+ #excluding intercept because estimates so much larger
+      geom_hline(yintercept=0, color = "red",linetype="dashed", lwd=1.5)+ #add dashed line at zero
+      geom_errorbar(aes(ymin=Estimate-`Std. Error`, ymax=Estimate+`Std. Error`), colour="blue", #adj SE
+                  width=0, lwd=1.5, alpha = 0.7) +
+      coord_flip()+ # flipping x and y axes
+      geom_point(size=8)+theme_classic(base_size = 20)+ ylab("Coefficient") +
+  xlab("Parameter")
+
+# lets pull the information we'll need to create a table 
+sw <- pink.avg$sw
+coeff <- df1[2:8,c(1:3, 5:6)]
+
+model.tbl <- cbind(coeff, sw) %>%
+  mutate(`N containing models` = c(3, 3, 3, 3, 3, 1, 1)) %>%
+  mutate_if(is.numeric, round, digits = 3)
+
+#write.csv(model.tbl, "Manuscript_scripts&data/Figures&Tables/pink_model_averaged_coeff.csv")
+```
+
+
+## Visualize pink 
+### Model averaged
+
+```{r}
+# predict over julian day and hold everything else at a median value
+newdata.j <- data.frame(juli_date = seq(min(pinkdf$juli_date), max(pinkdf$juli_date),
+                                        length.out = 130),
+                        juli_date2 = ((seq(min(pinkdf$juli_date),
+                                           max(pinkdf$juli_date)))^2),
+                        avg_biom_site_gm2 = rep(median(pinkdf$avg_biom_site_gm2, 
+                                                       na.rm = T), 130),
+                        dist_anad_km = rep(median(pinkdf$dist_anad_km, 
+                                                  na.rm = T), 130),
+                        avg_density = rep(median(pinkdf$avg_density, na.rm = T), 130),
+                        sed2_avg = rep(median(pinkdf$sed2_avg), 130),
+                        sed1_avg = rep(median(pinkdf$sed1_avg), 130))
+# add in julian day predictions to data frame
+pred.j <- predict(pink.avg, se.fit =TRUE, type = "response", newdata = newdata.j)
+
+newdata.j$predict <- pred.j$fit
+newdata.j$lwr <- pred.j$fit - (1.96*pred.j$se.fit)
+newdata.j$upr <- pred.j$fit + (1.96*pred.j$se.fit)
+
+# predict over sea otter density
+newdata.so <- data.frame(juli_date = rep(median(pinkdf$juli_date), 100),
+                         juli_date2 = rep(median(pinkdf$juli_date^2), 100),
+                         avg_density = seq(min(pinkdf$avg_density, na.rm = T), max(pinkdf$avg_density, na.rm = T), length.out = 100),
+                         avg_biom_site_gm2 = rep(median(pinkdf$avg_biom_site_gm2, 
+                                                       na.rm = T), 100),
+                        dist_anad_km = rep(median(pinkdf$dist_anad_km, 
+                                                  na.rm = T), 100),
+                         sed2_avg = rep(median(pinkdf$sed2_avg), 100),
+                        sed1_avg = rep(median(pinkdf$sed1_avg), 100))
+
+pred.so <- predict(pink.avg, se.fit = TRUE, type = "response", newdata=newdata.so)
+
+newdata.so$predict <- pred.so$fit
+newdata.so$lwr <- pred.so$fit - (1.96*pred.so$se.fit)
+newdata.so$upr <- pred.so$fit + (1.96*pred.so$se.fit)
+
+# predict over secondary average sed scores
+newdata.sed2 <- data.frame(juli_date = rep(median(pinkdf$juli_date), 100),
+                         juli_date2 = rep(median(pinkdf$juli_date^2), 100),
+                         avg_density = rep(median(pinkdf$avg_density, na.rm = T), 100),
+                         sed2_avg = seq(min(pinkdf$sed2_avg), max(pinkdf$sed2_avg), length.out = 100),
+                         avg_biom_site_gm2 = rep(median(pinkdf$avg_biom_site_gm2, 
+                                                       na.rm = T), 100),
+                        dist_anad_km = rep(median(pinkdf$dist_anad_km, 
+                                                  na.rm = T), 100),
+                        sed1_avg = rep(median(pinkdf$sed1_avg, na.rm = T), 100))
+
+pred.sed2 <- predict(pink.avg, se.fit = TRUE, type = "response", newdata=newdata.sed2)
+newdata.sed2$predict <- pred.sed2$fit
+newdata.sed2$lwr <- pred.sed2$fit - (pred.sed2$se.fit*1.96)
+newdata.sed2$upr <- pred.sed2$fit + (pred.sed2$se.fit*1.96)
+
+# predict over distance scores
+newdata.dist <- data.frame(juli_date = rep(median(pinkdf$juli_date), 100),
+                         juli_date2 = rep(median(pinkdf$juli_date^2), 100),
+                         avg_density = rep(median(pinkdf$avg_density, 
+                                                  na.rm = T), 100),
+                         dist_anad_km = seq(min(pinkdf$dist_anad_km),
+                                            max(pinkdf$dist_anad_km), 
+                                            length.out = 100),
+                         sed2_avg = rep(median(pinkdf$sed2_avg), 100),
+                         avg_biom_site_gm2 = rep(median(pinkdf$avg_biom_site_gm2, 
+                                                       na.rm = T), 100),
+                         sed1_avg = rep(median(pinkdf$sed1_avg), 100))
+
+pred.dist <- predict(pink.avg, se.fit = TRUE, type = "response", newdata=newdata.dist)
+newdata.dist$predict <- pred.dist$fit
+newdata.dist$lwr <- pred.dist$fit - (pred.dist$se.fit*1.96)
+newdata.dist$upr <- pred.dist$fit + (pred.dist$se.fit*1.96)
+
+
+# predict over eelgrass scores
+newdata.eel <- data.frame(juli_date = rep(median(pinkdf$juli_date), 100),
+                         juli_date2 = rep(median(pinkdf$juli_date^2), 100),
+                         avg_density = rep(median(pinkdf$avg_density, 
+                                                  na.rm = T), 100),
+                         dist_anad_km = rep(median(pinkdf$dist_anad_km), 100),
+                         sed2_avg = rep(median(pinkdf$sed2_avg), 100),
+                         avg_biom_site_gm2 = seq(min(pinkdf$avg_biom_site_gm2),
+                                            max(pinkdf$avg_biom_site_gm2), 
+                                            length.out = 100),
+                         sed1_avg = rep(median(pinkdf$sed1_avg), 100))
+
+pred.eel <- predict(pink.avg, se.fit = TRUE, type = "response", newdata=newdata.eel)
+newdata.eel$predict <- pred.eel$fit
+newdata.eel$lwr <- pred.eel$fit - (pred.eel$se.fit*1.96)
+newdata.eel$upr <- pred.eel$fit + (pred.eel$se.fit*1.96)
+
+## primary sediment
+newdata.sed1 <- data.frame(juli_date = rep(median(pinkdf$juli_date), 100),
+                         juli_date2 = rep(median(pinkdf$juli_date^2), 100),
+                         avg_density = rep(median(pinkdf$avg_density, 
+                                                  na.rm = T), 100),
+                         dist_anad_km = rep(median(pinkdf$dist_anad_km), 100),
+                         sed2_avg = rep(median(pinkdf$sed2_avg), 100),
+                         avg_biom_site_gm2 = rep(median(pinkdf$avg_biom_site_gm2),
+                                                 100),
+                         sed1_avg = seq(min(pinkdf$sed1_avg),
+                                            max(pinkdf$sed1_avg), 
+                                            length.out = 100))
+
+pred.sed1 <- predict(pink.avg, se.fit = TRUE, type = "response", newdata=newdata.sed1)
+newdata.sed1$predict <- pred.sed1$fit
+newdata.sed1$lwr <- pred.sed1$fit - (pred.sed1$se.fit*1.96)
+newdata.sed1$upr <- pred.sed1$fit + (pred.sed1$se.fit*1.96)
+```
+
+#### plot averaged/predicted models (Figure 5)
+```{r}
+
+pink.jday <- ggplot(newdata.j) +
+  geom_line(aes(x = juli_date, y = predict)) +
+  geom_ribbon(aes(x = juli_date, ymin = lwr, ymax = upr), alpha = 0.2) +
+  geom_point(data = pinkdf, aes(x = juli_date, y  = SALPINK)) +
+  coord_cartesian(ylim = c(0,300)) +
+  ylab(NULL) +
+  xlab("Day of year") +
+  plot_theme()
+
+
+
+pink.so <- ggplot(newdata.so) +
+  geom_line(aes(x = avg_density, y = predict)) +
+  geom_ribbon(aes(x = avg_density, ymin = lwr, ymax = upr), alpha = 0.2) +
+  geom_point(data = pinkdf, aes(x = avg_density, y  = SALPINK)) +
+  xlab(expression(paste("Log-transformed sea otter density (no. ",km^-2,")"))) + 
+  ylab(NULL) +
+  coord_cartesian(ylim = c(0,300)) + 
+  plot_theme()
+
+
+
+pink.sed2 <- ggplot(newdata.sed2) + 
+  geom_line(aes(x = sed2_avg, y = predict)) +
+  geom_ribbon(aes(x = sed2_avg, ymin = lwr, ymax = upr), alpha = 0.2) +
+  geom_point(data = pinkdf, aes(x = sed2_avg, y  = SALPINK)) +
+  xlab("Secondary sediment grain size score") + 
+  ylab(NULL) +
+  coord_cartesian(ylim = c(0,300)) +
+  plot_theme()
+
+pink.sed1 <- ggplot(newdata.sed1) + 
+  geom_line(aes(x = sed1_avg, y = predict)) +
+  geom_ribbon(aes(x = sed1_avg, ymin = lwr, ymax = upr), alpha = 0.2) +
+  geom_point(data = pinkdf, aes(x = sed1_avg, y  = SALPINK)) +
+  xlab("Primary sediment grain size score") + 
+  ylab(NULL) +
+  coord_cartesian(ylim = c(0,300)) +
+  plot_theme()
+
+pink.dist <- ggplot(newdata.dist) + 
+  geom_line(aes(x = dist_anad_km, y = predict)) +
+  geom_ribbon(aes(x = dist_anad_km, ymin = lwr, ymax = upr), alpha = 0.2) +
+  geom_point(data = pinkdf, aes(x = dist_anad_km, y  = SALPINK)) +
+  coord_cartesian(ylim = c(0,300)) +
+  ylab(NULL) +
+  xlab("Distance from anadromous stream (km)") +
+  plot_theme()
+
+
+
+pink.eel <- ggplot(newdata.eel) + 
+  geom_line(aes(x = avg_biom_site_gm2, y = predict)) +
+  geom_ribbon(aes(x = avg_biom_site_gm2, ymin = lwr, ymax = upr), alpha = 0.2) +
+  geom_point(data = pinkdf, aes(x = avg_biom_site_gm2, y  = SALPINK)) +
+  coord_cartesian(ylim = c(0,300)) +
+  ylab(NULL) +
+  xlab(expression(paste("Average eelgrass biomass (g",m^-2,")"))) +
+  plot_theme()
+
+
+
+library(patchwork)
+
+pinks.avg <- (pink.jday + pink.so) / (pink.eel + pink.dist) / (pink.sed2 + pink.sed1) +
+  plot_annotation(tag_levels = "a")
+
+pink.plot <- add_global_label(pinks.avg, 
+                              Ylab = "Pink~Salmon~'('*no.~seine^-1*')'",
+                 size = 8.25)
+
+#ggsave("Manuscript_scripts&data/Figures&Tables/model_averaged_pink_predictions.jpg", plot = pink.plot, width = 14, height = 14)
+```
+
+
+### singular top model (old)
+```{r}
+visreg(pink.avg, scale = "response")
+
+# avg_density, avg_biom, juliday, dist anad
+visreg(pink.mod2, "dist_anad_km", scale = "response", gg = T, rug = F,
+       partial = F, line.par = list(col = 'black')) +
+  geom_point(data = fish, aes(x = dist_anad_km, y = SALPINK)) +
+  plot_theme()
+
+# create final pink plots
+pink1 <- visreg(pink.mod2, "juli_date", 
+       scale = "response", gg = TRUE, rug = F, partial = F,
+       line.par = list(col = 'black')) + 
+  xlab(expression(paste("Day of year"))) + 
+  ylab(NULL) +
+  coord_cartesian(ylim = c(0,300)) +
+  geom_point(data = fish, aes(x = juli_date, y = SALPINK)) + 
+  plot_theme()
+pink1
+
+
+
+pink2 <- visreg(pink.mod2, "avg_density", 
+                scale = "response", gg = TRUE, rug = F, 
+                line.par = list(col = "black")) +
+  xlab(expression(paste("Sea otter density (no. ",km^-2,")"))) + 
+  ylab(NULL) +
+  coord_cartesian(ylim = c(0,300)) +
+    geom_point(data = fish, aes(x = avg_density, y = SALPINK)) + 
+  plot_theme()
+pink2  
+
+
+
+
+pink3 <- visreg(pink.mod2, "avg_biom_site_gm2", 
+                scale = "response", gg = TRUE, rug = F, 
+                line.par = list(col = "black")) +
+  xlab(expression(paste("Average eelgrass biomass (g",m^-2,")"))) + 
+  ylab(NULL) + coord_cartesian(ylim = c(0,300)) +
+    geom_point(data = fish, aes(x = avg_biom_site_gm2, y = SALPINK)) + 
+  plot_theme()
+pink3
+
+
+
+
+pink4 <- visreg(pink.mod2, "dist_anad_km", 
+                scale = "response", gg = TRUE, rug = F, 
+                line.par = list(col = "black")) +
+  xlab(expression(paste("Distance from anadromous stream (km)"))) + 
+  ylab(NULL) + coord_cartesian(ylim = c(0,300)) +
+  geom_point(data = fish, aes(x = dist_anad_km, y = SALPINK)) + 
+  plot_theme()
+pink4
+
+
+
+
+library(patchwork)
+pinks <- (pink1 + pink2) /
+  (pink3 + pink4) + plot_annotation(tag_levels = "a")
+
+
+pink.plot <- add_global_label(pinks, 
+                              Ylab = "Pink~Salmon~'('*no.~seine^-1*')'",
+                 size = 8.25)
+pink.plot
+summary(pink.mod2)
+
+library(sjPlot)
+tab_model(pink.mod2, transform = NULL)
+#ggsave("chp1_obj2_pink_plot_2-26-24.png", plot = pink.plot, width = 14, height = 10)
+```
+
+
+## Model table pink/chum (Table 2)
+```{r}
+library(sjPlot)
+summary(pink.mod2)
+summary(chum.mod5)
+tab_model(chum7.gam.tw, pink.avg, transform = NULL,
+          dv.labels = c("Juvenile Chum Salmon", "Juvenile Pink Salmon"),
+          show.est = TRUE, string.est = "Estimate", show.r2 = FALSE,
+          show.stat = TRUE, string.stat = "Statistic",
+          show.se = TRUE, show.ci = FALSE, string.p = "P-Value",
+          string.se = "Standard Error", p.style = "numeric",
+           pred.labels = c("intercept", "julian day", 
+                           "quadratic julian day", 
+                          "average sea otter density",
+                          "average secondary sediment score",
+                          "average eelgrass biomass",
+                          "distance from anadromous stream",
+                          "average primary sediment score"))
+pink.plot
+chum.plots
+# FOR THE AVERAGED MODELS WITH CHUM. 
+tab_model(avg.models, pink.mod2, transform = NULL,
+          dv.labels = c("Juvenile Chum Salmon", "Juvenile Pink Salmon"),
+          show.est = TRUE, string.est = "Estimate", show.r2 = FALSE,
+          show.stat = TRUE, string.stat = "Statistic",
+          show.se = TRUE, show.ci = FALSE, string.p = "P-Value",
+          string.se = "Standard Error", p.style = "numeric",
+          pred.labels = c("intercept", "day of year", 
+                           "quadratic day of year", 
+                          "average sea otter density",
+                          "average secondary sediment score",
+                          "average primary sediment score",
+                          "average eelgrass biomass",
+                          "distance from anadromous stream"))
+
+tab_model(avg.models, transform = NULL,
+          dv.labels = "Juvenile Chum Salmon",
+          show.est = TRUE, string.est = "Estimate", show.r2 = FALSE,
+          show.stat = TRUE, string.stat = "Statistic",
+          show.se = TRUE, show.ci = FALSE, string.p = "P-Value",
+          string.se = "Standard Error", p.style = "numeric",
+          pred.labels = c("intercept", "day of year", 
+                           "quadratic day of year", 
+                          "average sea otter density",
+                          "average secondary sediment score",
+                          "average primary sediment score"))
+
+tab_model(avg.models, transform = NULL)
+```
+
+# Average salmon
+```{r}
+fish %>%
+  dplyr::select(SALPINK, SALCHUM) %>%
+  dplyr::summarise(avg.pink = mean(SALPINK),
+                   sd.pink = sd(SALPINK),
+                   avg.chum = mean(SALCHUM),
+                   sd.chum = sd(SALCHUM))
+
+table(fish$SALPINK>0)
+# 24 sites had 0, 17 had positive numbers
+# 58.5% of sites had 0 pink salmon
+
+table(fish$SALCHUM >0)
+# 16 sites had 0, 25 had positive numbers
+# 39.0% of sites had 0 chum salmon
+range(fish$SALCHUM)
+range(fish$SALPINK)
+table(fish$SALCHUM)
+table(fish$SALPINK)
+```
+

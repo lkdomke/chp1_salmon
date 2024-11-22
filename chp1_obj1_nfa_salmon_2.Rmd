@@ -1154,7 +1154,7 @@ pink.long.region %>%
 ```
 
 ```{r}
-pink4 <- gam(abundance ~ Habitat + Mon + s(Lat1, Long1, k = 2), data = pink.long, 
+pink4 <- gam(abundance ~ Habitat + Mon + te(Lat1, Long1, k = 3), data = pink.long, 
     family = "nb", method = "ML") # might be worth comparing the s versus te (tensoor field), if the k is unconstrained than with the s it takes k == 2 and te it takes 3
 
 summary(pink4) # a note about this, the smoothed term in this case (representative of the stratification of the sites) so in that way you shouldn't need to have random effect. 
@@ -1240,12 +1240,34 @@ pink6 <- gam(abundance ~ Habitat + doy + s(SiteID, bs = "re"), data = pink.regio
 AIC(pink6); BIC(pink6)
 AIC(pink3); BIC(pink3) # same AIC and BIC values
 
+pink7 <- gam(abundance ~ Habitat + Mon + Long1 + s(SiteID, bs = "re"), data = pink.region, 
+    family = "nb", method = "ML")
+
+pink8 <- gam(abundance ~ Habitat + Mon + te(Lat1, Long1) + s(SiteID, bs = "re"), data = pink.region, 
+    family = "nb", method = "ML")
+
+draw(pink4)
+draw(pink1)
+draw(pink2)
+draw(pink4.1, residuals = T)
+draw(pink7)
+draw(pink8)
+
+summary(pink7)
+AICc(pink7)
+
+summary(pink8)
+AICc(pink8)
+
+draw(pink4.1)
 ```
 
 ## pink candidate model table
 ```{r}
 pink1; pink2; pink3; pink6
 pink4; pink4.1; pink5
+
+AICc(pink4); AICc(pink1); AICc(pink2); AICc(pink3); AICc(pink6); AICc(pink4.1); AICc(pink5); AICc(pink7); AICc(pink8)
 
 cand.models <- list() # create an empty list to include all the candidate models
 cand.models[[1]] <- pink1 # add in  models one at a time
@@ -1522,7 +1544,7 @@ table(sal.long.region$region, sal.long.region$Habitat)
 ```
 
 ```{r}
-chum4 <- gam(abundance ~ Habitat + Mon + s(Lat1, Long1, k = 2), data = chum.long, 
+chum4 <- gam(abundance ~ Habitat + Mon + te(Lat1, Long1, k = 3), data = chum.long, 
     family = "nb", method = "ML") # might be worth comparing the s versus te (tensoor field), if the k is unconstrained than with the s it takes k == 2 and te it takes 3
 
 summary(chum4) # a note about this, the smoothed term in this case (representative of the stratification of the sites) so in that way you shouldn't need to have random effect. 

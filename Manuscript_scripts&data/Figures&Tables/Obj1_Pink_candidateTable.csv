@@ -1,0 +1,8 @@
+"","model.names","AICc","BIC","method","delta.BIC","delta.AICc"
+"1","abundance ~ Habitat + Mon + (1 | SiteID)",413.04,427.23,"REML",0,0
+"2","abundance ~ Habitat + (1 | Mon) + (1 | SiteID)",427.85,438.32,"REML",11.09,14.81
+"3","abundance ~ Habitat + Mon + s(SiteID, bs = ""re"")",407.56,419.21,"ML",0,0
+"4","abundance ~ Habitat + Mon + s(Lat1)",410.49,430.93,"ML",11.72,2.93
+"5","abundance ~ Habitat + Mon + s(Lat1) + s(SiteID, bs = ""re"")",410.49,430.93,"ML",11.72,2.93
+"6","abundance ~ Habitat + Mon + te(Lat1, Long1, k = 3) + s(SiteID, bs = ""re"")",411.17,429.42,"ML",10.22,3.61
+"7","abundance ~ Habitat + Mon + s(Lat1, Long1) + s(SiteID, bs = ""re"")",420.53,443.63,"ML",24.43,12.97
