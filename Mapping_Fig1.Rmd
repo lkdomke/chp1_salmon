@@ -304,6 +304,7 @@ obj2_map <- ggplot() +
   plot_theme() +
   labs(y = NULL, x = "Longitude") +
   annotation_scale(text_family = "Calibri", text_cex = 2, line_width = 3) +
+  #annotation_north_arrow(which_north = "true", location = "bl", pad) +
   geom_sf_label(labels.prj, mapping = aes(label = Text), family = "Calibri", size = 6) +
   theme(legend.position = "inside",
         legend.position.inside = c(0.1,0.18),
